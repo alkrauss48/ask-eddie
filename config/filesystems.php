@@ -47,6 +47,13 @@ return [
             'report' => false,
         ],
 
+        'books' => [
+            'driver' => 'local',
+            'root' => env('BOOKS_PATH', base_path('.claude/source/cocktail-historian/data_raw/original')),
+            'throw' => true,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),
