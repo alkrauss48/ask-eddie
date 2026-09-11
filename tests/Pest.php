@@ -1,6 +1,9 @@
 <?php
 
+use App\Enums\PageStatus;
+use App\Models\BookPage;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Collection;
 use Tests\TestCase;
 
 /*
@@ -48,7 +51,88 @@ expect()->extend('toBeOne', function () {
 |
 */
 
-function something()
+/**
+ * Load a book's real page text from tests/Fixtures/Books.
+ *
+ * The fixtures are verbatim exports of promoted book_pages rows, named for the
+ * page they came from, so a failing assertion can be checked against the actual
+ * scan. Models are built unsaved, which lets the whole chunking pipeline be
+ * exercised from tests/Unit without a database.
+ *
+ * @param  list<int>|null  $pageNumbers  defaults to every page in the fixture directory
+ * @return Collection<int, BookPage>
+ */
+function fixturePages(string $slug, ?array $pageNumbers = null): Collection
 {
-    // ..
+    $directory = __DIR__.'/Fixtures/Books/'.$slug;
+
+    if ($pageNumbers === null) {
+        $pageNumbers = collect(glob($directory.'/page-*.txt') ?: [])
+            ->map(fn (string $path): int => (int) filter_var(basename($path), FILTER_SANITIZE_NUMBER_INT))
+            ->sort()
+            ->values()
+            ->all();
+    }
+
+    return collect($pageNumbers)->map(function (int $pageNumber) use ($directory, $slug): BookPage {
+        $path = $directory.'/page-'.$pageNumber.'.txt';
+
+        if (! is_file($path)) {
+            throw new RuntimeException("No fixture for {$slug} page {$pageNumber}.");
+        }
+
+        // Page text is stored trimmed, so the file's trailing newline -- which
+        // is there because these are text files -- is not part of it.
+        $text = rtrim((string) file_get_contents($path), "\n");
+
+        return new BookPage([
+            'page_number' => $pageNumber,
+            'text' => $text,
+            'char_count' => mb_strlen($text),
+            'word_count' => count(preg_split('/\s+/u', trim($text), -1, PREG_SPLIT_NO_EMPTY) ?: []),
+            'status' => PageStatus::Extracted,
+            'printed_page_label' => null,
+        ]);
+    })->values();
+}
+
+/**
+ * The observed printed page labels captured alongside a book's fixture pages.
+ *
+ * @return array<int, string>
+ */
+function fixtureLabels(string $slug): array
+{
+    $path = __DIR__.'/Fixtures/Books/'.$slug.'/labels.json';
+
+    if (! is_file($path)) {
+        throw new RuntimeException("No label fixture for {$slug}.");
+    }
+
+    /** @var array<string, string> $labels */
+    $labels = json_decode((string) file_get_contents($path), true, flags: JSON_THROW_ON_ERROR);
+
+    $keyed = [];
+
+    foreach ($labels as $pageNumber => $label) {
+        $keyed[(int) $pageNumber] = (string) $label;
+    }
+
+    return $keyed;
+}
+
+/**
+ * Build unsaved pages carrying only printed labels, for the label index.
+ *
+ * @param  array<int, string>  $labels
+ * @return Collection<int, BookPage>
+ */
+function pagesWithLabels(array $labels, int $through): Collection
+{
+    return collect(range(1, $through))->map(fn (int $pageNumber): BookPage => new BookPage([
+        'page_number' => $pageNumber,
+        'text' => 'Page text.',
+        'status' => PageStatus::Extracted,
+        'printed_page_label' => $labels[$pageNumber] ?? null,
+    ]))->values();
 }

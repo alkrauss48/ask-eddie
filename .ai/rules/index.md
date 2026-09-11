@@ -8,4 +8,5 @@ Before planning or editing, find the row whose globs match the file's path and r
 | docker/** | .ai/rules/docker.md |
 | compose.yaml | .ai/rules/general.md |
 | database/migrations/** | .ai/rules/migrations.md |
+| app/Models/BookChunk.php | .ai/rules/models.md |
 | tests/** | .ai/rules/tests.md |
