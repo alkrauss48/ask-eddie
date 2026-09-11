@@ -123,6 +123,79 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Chunking
+    |--------------------------------------------------------------------------
+    |
+    | Pages are cut into overlapping passages for retrieval. Chunking works on
+    | a whole book at a time rather than page by page, because 29% of the
+    | pages in this corpus end mid-sentence and 127 of them end mid-word: a
+    | page-by-page cut would sever a third of the corpus's sentences.
+    |
+    | "target_chars" is roughly one page -- the mean page holds 1,081
+    | characters -- which suits a corpus of thousands of short recipes, where
+    | precision matters more than breadth. Per-book median paragraph blocks run
+    | 14 to 140 characters, so a chunk this size still holds several *whole*
+    | recipes rather than a fragment of one.
+    |
+    | "max_chars" is a ceiling that is asserted in code, not a packing hint.
+    | The Python original treated its equivalent as a threshold, so a single
+    | long "sentence" could produce an oversized chunk that the embedding model
+    | then silently truncated. Measured across the corpus, text runs 5.73
+    | characters per word; 3.6 characters per token is budgeted here because
+    | OCR fragments, fractions like 1/2, and the French, Spanish and Italian
+    | titles all tokenize worse than plain English prose. That puts
+    | max_tokens + prefix_reserve_tokens at 480, inside a 512-token context
+    | window, so no embedding model chosen later can truncate a chunk.
+    |
+    | Phase 5 note: the per-source prompt budget must be max_chars, not a
+    | second independent number. The Python packed to 1,600 characters and then
+    | truncated each source to 1,200 in the prompt, discarding a quarter of
+    | every large chunk *after* it had been retrieved on the strength of that
+    | text.
+    |
+    | "headings_per_page_min" decides per book whether chunks are anchored to
+    | headings or simply packed. Candidate headings are counted per page,
+    | ignoring the first and last line of each page where running heads sit.
+    | Measured, the recipe books clear this comfortably -- Cafe Royal 1937 at
+    | 6.4 per page, Harry Johnson 1882 at 4.1 -- while the narrative books fall
+    | below it, which is the intended split.
+    |
+    | "label_*" govern printed page numbers. Only 61% of pages carry a folio,
+    | so the rest are interpolated from the book's numbering series and flagged
+    | as estimated. A series must hold "label_series_min_run" consecutive
+    | observations at one offset before it counts, because isolated folios in
+    | this corpus are usually misreads -- a title-page year read as "1937", or
+    | a stray "C". Extrapolation past the ends of a series is capped, so a book
+    | with no coherent numbering (Cafe Royal has 13 folios and no two agree)
+    | reports no printed page at all rather than a guess.
+    |
+    */
+
+    'chunking' => [
+        'target_chars' => (int) env('BOOKS_CHUNK_TARGET', 1200),
+        'max_chars' => (int) env('BOOKS_CHUNK_MAX', 1600),
+        'min_chars' => (int) env('BOOKS_CHUNK_MIN', 250),
+        'overlap_chars' => (int) env('BOOKS_CHUNK_OVERLAP', 200),
+        'max_tokens' => (int) env('BOOKS_CHUNK_MAX_TOKENS', 440),
+        'prefix_reserve_tokens' => (int) env('BOOKS_CHUNK_PREFIX_TOKENS', 40),
+        'chars_per_token' => (float) env('BOOKS_CHUNK_CHARS_PER_TOKEN', 3.6),
+        'headings_per_page_min' => (float) env('BOOKS_CHUNK_HEADINGS_PER_PAGE', 1.5),
+        'noise_score' => (float) env('BOOKS_CHUNK_NOISE_SCORE', 0.70),
+        'label_series_min_run' => (int) env('BOOKS_CHUNK_LABEL_MIN_RUN', 2),
+        'label_extrapolation_max_pages' => (int) env('BOOKS_CHUNK_LABEL_EXTRAPOLATION', 10),
+
+        /*
+        | Keyed by slug, for a book whose structure the measured gate above gets
+        | wrong. Empty on purpose: mirrors the catalog overrides below, and
+        | nothing should be listed here until an outline review calls for it.
+        */
+        'strategy_overrides' => [
+            //
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Catalog Overrides
     |--------------------------------------------------------------------------
     |
@@ -153,6 +226,88 @@ return [
             // Written in English at the Ritz in Paris, so it is dense with
             // French drink names and proper nouns.
             'language' => 'eng+fra',
+        ],
+
+        /*
+        | Books added after the original 28. The filenames come from the EUVS
+        | scans verbatim, so anything the parser gets wrong is corrected here
+        | rather than by renaming the file away from its source.
+        */
+        '1883 McDonough\'s bar-keepers\' guide, and gentlemen\'s sideboard companion (1883).pdf' => [
+            // Year appears twice; the trailing parenthetical wins and leaves the leading
+            // one stranded at the front of the title.
+            'title' => 'McDonough\'s Bar-Keepers\' Guide, and Gentlemen\'s Sideboard Companion',
+        ],
+        '1884 American and Other Drinks ( 1 st edition ) by Charlie Paul.pdf' => [
+            // An edition note sits in the title half, where extractEdition cannot reach it.
+            'title' => 'American and Other Drinks',
+            'edition' => '1st edition',
+        ],
+        '1898 Mixology; the art of preparing all kinds of drinks ...pdf' => [
+            // Scanner ellipsis marks a truncated subtitle, not part of the title.
+            'title' => 'Mixology: The Art of Preparing All Kinds of Drinks',
+        ],
+        '1900 The 20th century guide for mixing fancy drinks ...pdf' => [
+            'title' => 'The 20th Century Guide for Mixing Fancy Drinks',
+        ],
+        '1912 The Buffet Blue Book bu John H Considine.pdf' => [
+            // Filename typo: "bu" for "by", so the author never splits off.
+            'title' => 'The Buffet Blue Book',
+            'author' => 'John H. Considine',
+        ],
+        '1913 Bartenders\' Manual (Bartenders Association of America).pdf' => [
+            // Unlike the U.K.B.G. title, this parenthetical is the author, not part of
+            // how the book is known.
+            'title' => 'Bartenders\' Manual',
+            'author' => 'Bartenders Association of America',
+        ],
+        '1923 Harry of Ciro\'s ABC of mixing cocktails (second impression).pdf' => [
+            // "Harry of Ciro's" is the author, but reads as title text without a "by".
+            'title' => 'ABC of Mixing Cocktails',
+            'author' => 'Harry McElhone',
+            'edition' => 'second impression',
+        ],
+        '1930 Cocktails by _Jimmy_ late of Ciro\'s London.pdf' => [
+            // Underscores stand in for the quotation marks around the pseudonym.
+            'author' => 'Jimmy, late of Ciro\'s London',
+        ],
+        '1933 The Cocktail Book Repeal Edition (New Revised Edition).pdf' => [
+            'title' => 'The Cocktail Book',
+            'edition' => 'Repeal Edition, New Revised',
+        ],
+        '1934 100 Famous Cocktails ( second printing ) by Oscar of the Waldorf.pdf' => [
+            'title' => '100 Famous Cocktails',
+            'edition' => 'second printing',
+        ],
+        '1935 Sloppy Joe\'s Bar ( season 1935 ).pdf' => [
+            // EUVS issues one volume per season; the season is the edition.
+            'title' => 'Sloppy Joe\'s Bar',
+            'edition' => 'season 1935',
+        ],
+        '1922 Old Time Recipes Liquors Shrubs(4th edition) by Helen S Wright.pdf' => [
+            // Filename abbreviates a much longer title.
+            'title' => 'Old-Time Recipes for Home Made Wines, Cordials and Liqueurs',
+            'author' => 'Helen S. Wright',
+            'edition' => '4th edition',
+        ],
+        '1891 Cocktail Botthby\'s American Bar-Tender.pdf' => [
+            // Filename misspells Boothby, which would otherwise reach a citation.
+            'title' => 'Cocktail Boothby\'s American Bar-Tender',
+            'author' => 'William T. Boothby',
+        ],
+        '1878 American and other drinks.pdf' => [
+            'title' => 'American and Other Drinks',
+            'author' => 'Leo Engel',
+        ],
+        '1927 Barflies and Cocktails.pdf' => [
+            'author' => 'Harry McElhone',
+        ],
+        '1892 Drinks of the world.pdf' => [
+            'title' => 'Drinks of the World',
+            'author' => 'James Mew and John Ashton',
+        ],
+        'Cups & Their Custom by Henry Porter & George Roberts (1863).pdf' => [
+            'title' => 'Cups and Their Customs',
         ],
     ],
 

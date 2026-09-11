@@ -51,6 +51,22 @@ class Book extends Model
     }
 
     /**
+     * @return HasMany<BookSection, $this>
+     */
+    public function sections(): HasMany
+    {
+        return $this->hasMany(BookSection::class)->orderBy('sequence');
+    }
+
+    /**
+     * @return HasMany<BookChunk, $this>
+     */
+    public function chunks(): HasMany
+    {
+        return $this->hasMany(BookChunk::class)->orderBy('chunk_index');
+    }
+
+    /**
      * The absolute path of the source PDF on the configured books disk.
      */
     public function sourcePath(): string

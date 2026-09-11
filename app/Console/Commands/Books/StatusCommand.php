@@ -6,6 +6,7 @@ use App\Enums\PageStatus;
 use App\Enums\PageTextSource;
 use App\Models\Book;
 use App\Models\BookPage;
+use App\Services\Books\BookChunker;
 use Illuminate\Console\Command;
 
 class StatusCommand extends Command
@@ -14,7 +15,7 @@ class StatusCommand extends Command
 
     protected $description = 'Show extraction progress for every imported book';
 
-    public function handle(): int
+    public function handle(BookChunker $chunker): int
     {
         $slugs = array_filter((array) $this->option('book'));
 
@@ -29,11 +30,11 @@ class StatusCommand extends Command
             return self::FAILURE;
         }
 
-        $rows = $books->map(fn (Book $book): array => $this->row($book))->all();
+        $rows = $books->map(fn (Book $book): array => $this->row($book, $chunker))->all();
 
         $this->newLine();
         $this->table(
-            ['Book', 'Year', 'Status', 'Pages', 'Done', 'Blank', 'Failed', 'Source split', 'Mean quality'],
+            ['Book', 'Year', 'Status', 'Pages', 'Done', 'Blank', 'Failed', 'Source split', 'Mean quality', 'Chunks', 'Chunked'],
             $rows
         );
 
@@ -56,7 +57,7 @@ class StatusCommand extends Command
     /**
      * @return array<int, string>
      */
-    private function row(Book $book): array
+    private function row(Book $book, BookChunker $chunker): array
     {
         // reorder() drops the relation's page ordering, which Postgres will not
         // accept alongside a GROUP BY.
@@ -95,6 +96,27 @@ class StatusCommand extends Command
                 (int) ($sources[PageTextSource::TextLayer->value] ?? 0),
             ),
             $meanQuality === null ? '—' : number_format((float) $meanQuality, 3),
+            (string) $book->chunks()->count(),
+            $this->chunkState($book, $chunker),
         ];
+    }
+
+    /**
+     * Whether this book's chunks still match its pages and the current rules.
+     *
+     * This is where drift shows up. Re-running books:renormalize changes page
+     * text without touching any version number, so the check compares the
+     * assembled stream's checksum as well -- which is why it can say "stale"
+     * for a book nobody has touched since it was chunked.
+     */
+    private function chunkState(Book $book, BookChunker $chunker): string
+    {
+        if ($book->chunks()->doesntExist()) {
+            return '<fg=gray>—</>';
+        }
+
+        return $chunker->isStale($book)
+            ? '<fg=yellow>stale</>'
+            : 'v'.($book->metadata['chunking']['chunker_version'] ?? BookChunker::VERSION);
     }
 }
