@@ -17,8 +17,13 @@ return [
     'default_for_images' => 'gemini',
     'default_for_audio' => 'openai',
     'default_for_transcription' => 'openai',
-    'default_for_embeddings' => 'openai',
-    'default_for_reranking' => 'cohere',
+    // Corpus vectors and query vectors must come from the same model, and
+    // whereVectorSimilarTo() auto-embeds a string query with no provider or
+    // model argument -- so leaving this on "openai" would embed every query
+    // with a different model than the corpus, with no exception raised and
+    // plausible-looking output. See config/books.php's embedding block.
+    'default_for_embeddings' => env('AI_EMBEDDINGS_PROVIDER', 'tei'),
+    'default_for_reranking' => env('AI_RERANKING_PROVIDER', 'tei-rerank'),
 
     /*
     |--------------------------------------------------------------------------
@@ -142,6 +147,42 @@ return [
         'openrouter' => [
             'driver' => 'openrouter',
             'key' => env('OPENROUTER_API_KEY'),
+        ],
+
+        /*
+        | Text Embeddings Inference, running locally in Docker. It speaks the
+        | OpenAI /v1/embeddings shape, so the stock openai-compatible driver
+        | drives it with no custom code. The default model is required: the
+        | driver throws rather than guessing one.
+        */
+        'tei' => [
+            'driver' => 'openai-compatible',
+            'url' => env('TEI_EMBED_URL', 'http://tei-embed:80/v1'),
+            'key' => env('TEI_EMBED_KEY', ''),
+            'models' => [
+                'embeddings' => [
+                    'default' => env('BOOKS_EMBEDDING_MODEL', 'BAAI/bge-m3'),
+                    'dimensions' => (int) env('BOOKS_EMBEDDING_DIMENSIONS', 1024),
+                ],
+            ],
+        ],
+
+        /*
+        | TEI's cross-encoder endpoint is /rerank rather than anything OpenAI
+        | defines, and the package ships reranking for Bedrock, Jina, Cohere and
+        | VoyageAI only -- so this driver is registered by the application in
+        | AppServiceProvider::boot() via Ai::extend(). It is a real provider, so
+        | Reranking::of(), Reranking::fake() and the rest work unchanged.
+        */
+        'tei-rerank' => [
+            'driver' => 'tei-rerank',
+            'url' => env('TEI_RERANK_URL', 'http://tei-rerank:80'),
+            'key' => env('TEI_RERANK_KEY', ''),
+            'models' => [
+                'reranking' => [
+                    'default' => env('BOOKS_RERANKING_MODEL', 'BAAI/bge-reranker-v2-m3'),
+                ],
+            ],
         ],
 
         'voyageai' => [

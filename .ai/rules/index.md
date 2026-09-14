@@ -9,4 +9,5 @@ Before planning or editing, find the row whose globs match the file's path and r
 | compose.yaml | .ai/rules/general.md |
 | database/migrations/** | .ai/rules/migrations.md |
 | app/Models/BookChunk.php | .ai/rules/models.md |
+| app/Services/Retrieval/**, app/Ai/Tei/**, app/Tools/SearchTheBooks.php, app/Agents/EddieAgent.php, app/Services/Books/ChunkEmbedder.php | .ai/rules/retrieval.md |
 | tests/** | .ai/rules/tests.md |

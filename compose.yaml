@@ -48,9 +48,67 @@ services:
                 - '${DB_USERNAME}'
             retries: 3
             timeout: 5s
+    tei-embed:
+        # Text Embeddings Inference serves one model per instance, so embeddings
+        # and reranking are two containers off one image. They are here rather
+        # than on the host because the corpus vectors and every query vector
+        # must come from the same implementation: a llama.cpp-based server and a
+        # transformers-based one can differ in pooling or normalization, and the
+        # mismatch degrades retrieval silently instead of loudly.
+        image: 'ghcr.io/huggingface/text-embeddings-inference:cpu-latest'
+        # TEI publishes linux/amd64 only -- there is no arm64 manifest for any
+        # tag -- so on Apple Silicon this runs under emulation. That is the
+        # price of dev and production embedding through the same
+        # implementation, which is not negotiable: the corpus vectors and every
+        # query vector have to come from the same server or retrieval degrades
+        # silently. Measure a single book before starting a full corpus run.
+        platform: linux/amd64
+        command:
+            - '--model-id'
+            - 'BAAI/bge-m3'
+            # Belt and braces: ChunkPacker already asserts a 400-token ceiling,
+            # so nothing approaches bge-m3's 8192 limit -- but a truncation is
+            # preferable to a 413 in the middle of a bulk embed.
+            - '--auto-truncate'
+            # TEI's 16384 default allocates a warm-up activation buffer this
+            # model cannot fit beside its own float32 weights, and the container
+            # is OOM-killed before it ever serves a request. Chunks are capped
+            # at 440 tokens, so 4096 still batches nine of them at a time.
+            - '--max-batch-tokens'
+            - '4096'
+            - '--max-client-batch-size'
+            - '32'
+        ports:
+            - '${TEI_EMBED_PORT:-8080}:80'
+        volumes:
+            - 'tei-models:/data'
+        networks:
+            - sail
+    tei-rerank:
+        image: 'ghcr.io/huggingface/text-embeddings-inference:cpu-latest'
+        platform: linux/amd64
+        command:
+            - '--model-id'
+            - 'BAAI/bge-reranker-v2-m3'
+            - '--auto-truncate'
+            - '--max-batch-tokens'
+            - '4096'
+            # books.retrieval.rerank.candidates is 40, and TEI's default client
+            # batch cap is 32 -- which would reject every rerank request with a
+            # 413 rather than anything that names the real limit.
+            - '--max-client-batch-size'
+            - '64'
+        ports:
+            - '${TEI_RERANK_PORT:-8081}:80'
+        volumes:
+            - 'tei-models:/data'
+        networks:
+            - sail
 networks:
     sail:
         driver: bridge
 volumes:
     sail-pgsql:
+        driver: local
+    tei-models:
         driver: local

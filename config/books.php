@@ -196,6 +196,99 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Embedding
+    |--------------------------------------------------------------------------
+    |
+    | Chunks are embedded locally by Text Embeddings Inference, configured as
+    | the "tei" provider in config/ai.php. The model is bge-m3 at its native
+    | 1024 dimensions, chosen because retrieval auto-embeds a bare query string
+    | with no instruction prefix: the asymmetric alternatives (multilingual-e5,
+    | nomic-embed-text) want a "query:" prefix and lose recall without one, with
+    | no error to show for it. bge-m3 needs no prefix, is multilingual for the
+    | 951 non-English chunks and the accented drink names throughout, and sits
+    | under pgvector's 2,000-dimension HNSW ceiling.
+    |
+    | "dimensions" is mirrored by the vector column's own typmod, which is
+    | hard-coded in the migration because a migration must replay identically
+    | forever. BookChunkEmbeddingSchemaTest pins the two together, so a change
+    | here fails a test rather than silently mismatching the schema.
+    |
+    | "version" is the embedder's own version, bumped when the string handed to
+    | the model changes shape. Together with the model name and dimensions it
+    | decides which rows books:embed considers pending.
+    |
+    */
+
+    'embedding' => [
+        'provider' => env('AI_EMBEDDINGS_PROVIDER', 'tei'),
+        'model' => env('BOOKS_EMBEDDING_MODEL', 'BAAI/bge-m3'),
+        'dimensions' => (int) env('BOOKS_EMBEDDING_DIMENSIONS', 1024),
+        'batch_size' => (int) env('BOOKS_EMBEDDING_BATCH', 32),
+        'timeout' => (int) env('BOOKS_EMBEDDING_TIMEOUT', 120),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Retrieval
+    |--------------------------------------------------------------------------
+    |
+    | Retrieval is hybrid: a dense channel over the vector column and a lexical
+    | channel over a stored tsvector, fused with Reciprocal Rank Fusion. Both
+    | matter here. "a bitter gin drink with orange" shares no keyword with the
+    | recipe that answers it, and "Blue Lady" is a proper noun that a vector
+    | will happily confuse with every other blue drink in the corpus.
+    |
+    | "min_similarity" is a floor against nonsense rather than a relevance gate.
+    | Cosine similarity over a single-domain corpus compresses into a narrow
+    | band, so a high floor would throw away the ranking the fusion step exists
+    | to do.
+    |
+    | "ef_search" must be at least dense_candidates or the HNSW scan quietly
+    | returns fewer rows than asked for, which looks like a thin corpus rather
+    | than a mis-set knob.
+    |
+    | "rrf_k" damps the contribution of top ranks: with k = 60, rank 1 scores
+    | 1/61 and rank 10 scores 1/70, so a document found by both channels beats
+    | one found brilliantly by a single channel. That is the property being
+    | bought.
+    |
+    | "text_search_config" is english for the whole corpus. Non-English is 951
+    | of 24,926 chunks (3.8%); the English stemmer under-stems them but never
+    | drops them, and exact drink-name tokens still match. It is baked into the
+    | generated column, so changing it means a migration.
+    |
+    | Reranking defaults on because it is local and costs nothing per query
+    | beyond latency. It is not free of risk, though: over 25k short recipe
+    | passages a cross-encoder's marginal value is smaller than it would be
+    | over long documents, so measure before assuming it earns its latency. If
+    | it is too slow, lower "candidates" before disabling the stage.
+    |
+    */
+
+    'retrieval' => [
+        'dense_candidates' => (int) env('BOOKS_RETRIEVAL_DENSE', 60),
+        'lexical_candidates' => (int) env('BOOKS_RETRIEVAL_LEXICAL', 60),
+        'min_similarity' => (float) env('BOOKS_RETRIEVAL_MIN_SIMILARITY', 0.30),
+        'ef_search' => (int) env('BOOKS_RETRIEVAL_EF_SEARCH', 100),
+        'text_search_config' => env('BOOKS_RETRIEVAL_TEXT_CONFIG', 'english'),
+        'rrf_k' => (int) env('BOOKS_RETRIEVAL_RRF_K', 60),
+        'weights' => [
+            'dense' => (float) env('BOOKS_RETRIEVAL_WEIGHT_DENSE', 1.0),
+            'lexical' => (float) env('BOOKS_RETRIEVAL_WEIGHT_LEXICAL', 1.0),
+        ],
+        'limit' => (int) env('BOOKS_RETRIEVAL_LIMIT', 8),
+
+        'rerank' => [
+            'enabled' => (bool) env('BOOKS_RERANK_ENABLED', true),
+            'provider' => env('AI_RERANKING_PROVIDER', 'tei-rerank'),
+            'model' => env('BOOKS_RERANKING_MODEL', 'BAAI/bge-reranker-v2-m3'),
+            'candidates' => (int) env('BOOKS_RERANK_CANDIDATES', 40),
+            'timeout' => (int) env('BOOKS_RERANK_TIMEOUT', 30),
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Catalog Overrides
     |--------------------------------------------------------------------------
     |

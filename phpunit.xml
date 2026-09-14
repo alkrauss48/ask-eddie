@@ -31,5 +31,13 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <!--
+            No test may require TEI to be running. Http::preventStrayRequests()
+            in tests/Pest.php is the real guard; these point the providers at an
+            address that cannot resolve, so a test that slips past it fails
+            loudly rather than reaching a service that happens to be up.
+        -->
+        <env name="TEI_EMBED_URL" value="http://tei-embed.invalid/v1"/>
+        <env name="TEI_RERANK_URL" value="http://tei-rerank.invalid"/>
     </php>
 </phpunit>

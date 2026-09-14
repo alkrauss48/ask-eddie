@@ -4,6 +4,9 @@ use App\Enums\PageStatus;
 use App\Models\BookPage;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Http;
+use Laravel\Ai\Embeddings;
+use Laravel\Ai\Gateway\FakeEmbeddingGateway;
 use Tests\TestCase;
 
 /*
@@ -19,6 +22,12 @@ use Tests\TestCase;
 
 pest()->extend(TestCase::class)
     ->use(RefreshDatabase::class)
+    ->beforeEach(function (): void {
+        // No test may reach TEI, or any other service. phpunit.xml points the
+        // TEI URLs at an unroutable host as a second backstop, but this is the
+        // one that fails with a readable message naming the URL.
+        Http::preventStrayRequests();
+    })
     ->in('Feature');
 
 // Unit tests boot the application without touching the database, so that the
@@ -135,4 +144,54 @@ function pagesWithLabels(array $labels, int $through): Collection
         'status' => PageStatus::Extracted,
         'printed_page_label' => $labels[$pageNumber] ?? null,
     ]))->values();
+}
+
+/**
+ * A one-hot vector of the configured width.
+ *
+ * Random vectors make ordering assertions flaky at the margins: two random
+ * 1024-dimensional vectors are nearly orthogonal, but "nearly" is not a number
+ * a test can assert on. Cosine similarity between two one-hot vectors is
+ * exactly 1 when the axes match and exactly 0 when they do not, so a test can
+ * say which chunk comes back first and mean it.
+ *
+ * @return list<float>
+ */
+function unitVector(int $axis, ?int $dimensions = null): array
+{
+    $dimensions ??= (int) config('books.embedding.dimensions');
+
+    $vector = array_fill(0, $dimensions, 0.0);
+    $vector[$axis % $dimensions] = 1.0;
+
+    return $vector;
+}
+
+/**
+ * Fake embeddings generation, optionally mapping each input to a fixed vector.
+ *
+ * Embeddings::fake() clones the *resolved* provider, so the fake gateway reads
+ * dimensions off the real configuration and hands back 1024-wide vectors with
+ * nothing said here. Pass a map to pin specific inputs; anything unmapped gets
+ * a random unit vector of the right width.
+ *
+ * @param  array<string, list<float>>  $vectors  keyed by a substring of the input
+ */
+function fakeEmbeddings(array $vectors = []): FakeEmbeddingGateway
+{
+    if ($vectors === []) {
+        return Embeddings::fake();
+    }
+
+    return Embeddings::fake(function ($prompt) use ($vectors): array {
+        return array_map(function (string $input) use ($vectors): array {
+            foreach ($vectors as $needle => $vector) {
+                if (str_contains($input, $needle)) {
+                    return $vector;
+                }
+            }
+
+            return Embeddings::fakeEmbedding((int) config('books.embedding.dimensions'));
+        }, $prompt->inputs);
+    });
 }

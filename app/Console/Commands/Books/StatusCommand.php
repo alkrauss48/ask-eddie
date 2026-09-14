@@ -7,6 +7,7 @@ use App\Enums\PageTextSource;
 use App\Models\Book;
 use App\Models\BookPage;
 use App\Services\Books\BookChunker;
+use App\Services\Books\ChunkEmbedder;
 use Illuminate\Console\Command;
 
 class StatusCommand extends Command
@@ -15,7 +16,7 @@ class StatusCommand extends Command
 
     protected $description = 'Show extraction progress for every imported book';
 
-    public function handle(BookChunker $chunker): int
+    public function handle(BookChunker $chunker, ChunkEmbedder $embedder): int
     {
         $slugs = array_filter((array) $this->option('book'));
 
@@ -30,11 +31,11 @@ class StatusCommand extends Command
             return self::FAILURE;
         }
 
-        $rows = $books->map(fn (Book $book): array => $this->row($book, $chunker))->all();
+        $rows = $books->map(fn (Book $book): array => $this->row($book, $chunker, $embedder))->all();
 
         $this->newLine();
         $this->table(
-            ['Book', 'Year', 'Status', 'Pages', 'Done', 'Blank', 'Failed', 'Source split', 'Mean quality', 'Chunks', 'Chunked'],
+            ['Book', 'Year', 'Status', 'Pages', 'Done', 'Blank', 'Failed', 'Source split', 'Mean quality', 'Chunks', 'Chunked', 'Embedded'],
             $rows
         );
 
@@ -57,7 +58,7 @@ class StatusCommand extends Command
     /**
      * @return array<int, string>
      */
-    private function row(Book $book, BookChunker $chunker): array
+    private function row(Book $book, BookChunker $chunker, ChunkEmbedder $embedder): array
     {
         // reorder() drops the relation's page ordering, which Postgres will not
         // accept alongside a GROUP BY.
@@ -98,7 +99,34 @@ class StatusCommand extends Command
             $meanQuality === null ? '—' : number_format((float) $meanQuality, 3),
             (string) $book->chunks()->count(),
             $this->chunkState($book, $chunker),
+            $this->embedState($book),
         ];
+    }
+
+    /**
+     * How much of this book is in the vector index.
+     *
+     * Reported as a fraction of the indexable chunks rather than of all of
+     * them, because the non-indexable ones are never meant to have a vector --
+     * a book showing 340/340 with 12 chunks excluded is correct, and a
+     * percentage of the total would make it look like a shortfall forever.
+     */
+    private function embedState(Book $book): string
+    {
+        $indexable = $book->chunks()->where('is_indexable', true)->count();
+
+        if ($indexable === 0) {
+            return '<fg=gray>—</>';
+        }
+
+        $embedded = $book->chunks()
+            ->where('is_indexable', true)
+            ->whereNotNull('embedding')
+            ->count();
+
+        $label = "{$embedded}/{$indexable}";
+
+        return $embedded === $indexable ? $label : "<fg=yellow>{$label}</>";
     }
 
     /**

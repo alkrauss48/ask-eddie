@@ -11,9 +11,9 @@ Getting there takes two halves:
    citation-bearing text — see [Step 1: the book pipeline](#step-1-the-book-pipeline).
 2. **Cut it into passages.** Turn those pages into retrievable chunks that each know the
    book and the page range they came from — see [Step 2: chunking](#step-2-chunking).
-   **Steps 1 and 2 are what exist today.**
-3. **Give it a voice.** Embed the chunks into pgvector, retrieve against them, and serve
-   them through Eddie. Not built yet; the schema and the `laravel/ai` SDK are in place for it.
+3. **Give it a voice.** Embed the chunks into pgvector, retrieve against them with a hybrid
+   query, and serve them through Eddie — see
+   [Step 3: embed, retrieve, answer](#step-3-embed-retrieve-answer).
 
 ---
 
@@ -376,6 +376,235 @@ leaving "Blue Lady" unsearchable in a book that is nothing but drink names.
 
 ---
 
+## Step 3: embed, retrieve, answer
+
+Turns 24,926 indexable chunks into vectors, retrieves against them with a hybrid dense +
+lexical query, and hands the winners to Eddie as citation-bearing passages.
+
+```
+book_chunks
+     │
+     │  books:embed         BookChunk::embeddingText() -> TEI (bge-m3, 1024d)
+     ▼                      written back with the model, width and version that made it
+embedding  vector(1024)     HNSW, vector_cosine_ops
+search_vector  tsvector     generated column, GIN
+
+     a question
+     │
+     ├── dense    embed the query with the same model -> HNSW nearest neighbours (60)
+     │
+     └── lexical  websearch_to_tsquery -> ts_rank_cd over search_vector (60)
+             │
+             ▼
+       Reciprocal Rank Fusion    score = Σ wᵢ / (k + rankᵢ)
+             │
+             ▼
+       cross-encoder rerank      bge-reranker-v2-m3, top 40, optional
+             │
+             ▼
+       8 passages -> SearchTheBooks -> EddieAgent
+```
+
+### Why it is hybrid
+
+Neither channel is sufficient, and the two verification queries show why:
+
+- **"a bitter gin drink with orange"** shares no keyword with the recipe that answers it.
+  Only the vector finds it.
+- **"Blue Lady"** is a proper noun an embedding will happily place next to every other blue
+  drink in the corpus. Only the tsvector pins it.
+
+RRF fuses the two on rank alone, never on the channels' own scores — cosine similarity and
+`ts_rank_cd` are not comparable numbers, and normalizing them into one scale is a guess that
+changes with the corpus. With `k = 60`, a passage both channels found in their top ten beats
+one a single channel put first, which is the property being bought.
+
+`eddie:ask --sources` prints both channel ranks beside the fused score. That is not
+decoration: a hybrid search where one channel silently returns nothing answers questions
+perfectly well, slightly worse, in a way no single answer reveals. A column of dashes shows
+it immediately.
+
+### Why local inference, and why the same server in both environments
+
+Embeddings come from [Text Embeddings Inference](https://github.com/huggingface/text-embeddings-inference)
+running in Docker — `tei-embed` for `BAAI/bge-m3`, `tei-rerank` for `BAAI/bge-reranker-v2-m3`.
+Production has to embed the user's query on every request, so a model-serving process must
+exist there regardless; TEI serves embeddings *and* cross-encoder rerankers from one image,
+so reranking is incremental on infrastructure that already has to be there. It speaks
+OpenAI's `/v1/embeddings` shape, so `laravel/ai`'s stock `openai-compatible` driver drives it
+with no custom code.
+
+Using it in **both** environments is deliberate. The corpus vectors and every query vector
+must come from the same implementation: a llama.cpp-based server and a transformers-based one
+can differ in pooling or normalization, and the mismatch degrades retrieval silently rather
+than loudly. Swapping implementations later is only safe behind an equivalence check — embed
+a 100-chunk sample through both and assert pairwise cosine similarity > 0.999 first.
+
+`bge-m3` is chosen for being *symmetric*. Retrieval auto-embeds a bare query string with no
+instruction prefix, and the obvious alternatives (`multilingual-e5-large`,
+`nomic-embed-text`) are asymmetric — they want a `query:` prefix and lose recall without one,
+with no error to show for it. bge-m3 needs none, is natively 1024-dimensional (under
+pgvector's 2,000-dim HNSW ceiling), and is multilingual for the 951 non-English chunks and
+the accented drink names throughout.
+
+### Running it
+
+```bash
+sail up -d                                     # brings up tei-embed and tei-rerank
+sail artisan books:doctor                      # both TEI services reachable, model ids match
+sail artisan migrate
+
+sail artisan books:embed --book=heres-how-1927 # time one small book first
+sail artisan books:embed                       # then the corpus
+sail artisan books:embed --verify
+
+sail artisan eddie:ask "what goes in a Blue Lady?" --sources
+sail artisan eddie:ask "a bitter gin drink with orange" --sources
+```
+
+`books:embed` is resumable. A vector belongs to exactly one chunk and is written by an
+id-keyed update, and each batch commits in its own transaction rather than the run holding
+one open — so interrupting it costs one batch, and re-running picks up only what still needs
+a vector. Every row records the model, width and embedder version that produced it, which is
+what makes trying a new model a command rather than a manual purge: a row disagreeing with
+configuration is pending again without `--force`.
+
+### On Apple Silicon, this is slow
+
+TEI publishes **linux/amd64 only** — there is no arm64 manifest for any tag — so
+`compose.yaml` pins `platform: linux/amd64` and the containers run under emulation. Measured
+on an M-series host:
+
+| | Emulated (Apple Silicon) | Expected on amd64 |
+| --- | --- | --- |
+| Bulk embed | ~0.8 chunks/s → **~9 hours** for the corpus | 1–3 hours |
+| Rerank, 40 passages | **~66 seconds** | 0.5–1.5s |
+
+It is not misconfigured — the embedder runs at ~870% CPU, saturating the cores. This is the
+price of one embedding implementation across dev and production, and it is paid once for the
+bulk embed. Set `BOOKS_RERANK_ENABLED=false` locally, though: retrieval degrades to the fused
+RRF order, which is most of the quality anyway, and a 66-second pause is not a bar.
+
+The two containers also hold about **9 GB between them** (embed ~5.2, rerank ~4.1) whether or
+not they are serving anything. Stop `tei-rerank` before a bulk embed — it is only needed at
+query time. A full run alongside another project's Docker stack was killed for low memory an
+hour in; `books:embed` resumed from exactly where it stopped, but the lock a killed run leaves
+behind has to be cleared by hand (the command prints how).
+
+Two TEI flags are not optional. `--max-batch-tokens 4096`, because the 16384 default
+allocates a warm-up buffer bge-m3 cannot fit beside its float32 weights and the container is
+OOM-killed before it serves anything. And `--max-client-batch-size 64` on the reranker,
+because the default is 32 while `rerank.candidates` is 40 — which would 413 every request.
+
+### The schema, and what it pins
+
+Both indexes are one-way doors over 26,466 rows, and two of them fail *quietly* when they
+drift, so each has a test:
+
+- **`vector(1024)`** is hard-coded in the migration rather than read from config, because a
+  migration must replay identically forever. `BookChunkEmbeddingSchemaTest` pins the column's
+  width to `books.embedding.dimensions`, so a divergence fails at edit time.
+- **`vector_cosine_ops`** is baked into the HNSW index. `whereVectorSimilarTo` compiles to
+  `<=>` and converts `minSimilarity` as `1 - similarity`, which is meaningful only for
+  cosine. An `l2_ops` index would rank *almost* right, which is harder to notice than ranking
+  wrong.
+- **`search_vector`** is a generated `tsvector` written by hand, not with `$table->fullText()`.
+  `PostgresGrammar::compileFulltext()` emits `to_tsvector(cfg, a) || to_tsvector(cfg, b)` with
+  no `coalesce`, and NULL propagates through `||`. Only 56% of chunks have a `heading` and 36%
+  a `section_title`, so `fullText()` would leave **64% of the corpus indexed as NULL** —
+  matching nothing, forever, with nothing anywhere to say so. The test that pins this looks
+  for a chunk whose only distinguishing word is "Curaçao" in its body.
+
+`headings` is in the lexical index too, so a packed block of ten Cafe Royal recipes is
+findable by all ten drink names rather than only the one it opens with.
+
+A later index rebuild over populated rows wants `set maintenance_work_mem = '512MB'`:
+24,926 × 1024 float4 is ~102 MB against a 64 MB default, which forces pgvector's slow
+two-pass build.
+
+### `books:embed --verify`
+
+Seven invariants, each a query, each something retrieval is otherwise entitled to assume. A
+corpus that fails one still answers questions — just with the wrong passages.
+
+- every indexable chunk is embedded, and **no non-indexable chunk is**
+- exactly one `(model, dimensions, version)` triple exists table-wide, and it matches config
+- `vector_dims(embedding)` equals the width each row claims
+- no zero-norm vector (cosine distance against one is NaN, which poisons every ordering it
+  reaches)
+- no chunk whose `updated_at` moved after it was embedded — `books:renormalize` and
+  `books:chunk` both do that without touching any version number
+
+### The eight-key payload is still eight keys
+
+`BookChunk::toArray()` *is* what the language model is handed, and Step 3 added six columns to
+the table. All six are hidden, and both `BookChunkCitationTest` and `SearchTheBooksToolTest`
+assert the payload **by count**, not by subset — once on a chunk that has an embedding and a
+populated `search_vector`.
+
+Retrieval metadata lives on `RetrievedChunk`, never on the model: no `setAttribute('score')`,
+no `$appends`, no `addSelect` of a distance alias. A score in the payload reads to the model
+as content it may repeat, and "relevance 0.87" in a bartender's answer is both meaningless to
+a guest and a break in character.
+
+### Reranking is a mode, not a dependency
+
+`NullReranker` is bound whenever the stage is disabled, and `AiReranker` falls back to it on
+any failure — an unreachable service, an error response, or a provider name that turns out not
+to support reranking at all (`AiManager::rerankingProvider()` throws a `LogicException`
+outright for that). A cross-encoder outage costs ordering quality, never an exception in the
+middle of answering a guest.
+
+It is a legitimate mode rather than a stub. Hybrid plus RRF is the bulk of the quality gain,
+and over 25,000 short recipe passages a cross-encoder's marginal value is smaller than it
+would be over long documents. Measure before assuming it earns its latency; if it is too
+slow, lower `BOOKS_RERANK_CANDIDATES` before turning the stage off.
+
+TEI's `/rerank` is not a shape `laravel/ai` ships, so `TeiRerankerProvider` is registered with
+`Ai::extend('tei-rerank', …)` in `AppServiceProvider::boot()`. It is a real provider, so
+`Reranking::of()`, `Reranking::fake()` and everything else work on it unchanged — the only
+difference from using Cohere is the name in configuration.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `books:embed` | Embeds indexable chunks. `--book=slug` (repeatable), `--force`, `--batch=`, `--dry-run`, `--verify`. Resumable; holds a cache lock. |
+| `eddie:ask` | Asks Eddie a question. `--sources` shows both channel ranks and the fused score, `--retrieval-only` stops before the language model, `--limit=`. |
+
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TEI_EMBED_URL` | `http://tei-embed:80/v1` | Embedding service, as seen from inside the Docker network. |
+| `TEI_RERANK_URL` | `http://tei-rerank:80` | Reranking service. |
+| `BOOKS_EMBEDDING_MODEL` | `BAAI/bge-m3` | Recorded per row; changing it makes the corpus pending. |
+| `BOOKS_EMBEDDING_DIMENSIONS` | `1024` | Pinned to the column's own width by a test. |
+| `BOOKS_EMBEDDING_BATCH` | `32` | Chunks per request. TEI's client batch cap is 32. |
+| `BOOKS_RETRIEVAL_DENSE` | `60` | Dense candidates before fusion. |
+| `BOOKS_RETRIEVAL_LEXICAL` | `60` | Lexical candidates before fusion. |
+| `BOOKS_RETRIEVAL_MIN_SIMILARITY` | `0.30` | A floor against nonsense, not a relevance gate. |
+| `BOOKS_RETRIEVAL_EF_SEARCH` | `100` | Must be ≥ the dense candidate count or HNSW returns short. |
+| `BOOKS_RETRIEVAL_RRF_K` | `60` | Fusion damping. |
+| `BOOKS_RETRIEVAL_LIMIT` | `8` | Passages handed to Eddie. |
+| `BOOKS_RERANK_ENABLED` | `true` | Set `false` on Apple Silicon. |
+| `BOOKS_RERANK_CANDIDATES` | `40` | Lower this before disabling the stage. |
+
+`ai.default` stays on OpenAI for text generation. `default_for_embeddings`,
+`default_for_reranking` and `default` resolve independently, which is exactly the
+multi-provider shape the package is built for — but leaving `default_for_embeddings` on
+`openai` would be the one silent catastrophe here, because `whereVectorSimilarTo` auto-embeds
+with no model argument and queries would be embedded by a different model than the corpus.
+
+### Deployment
+
+The two TEI containers must exist in production too, and `BOOKS_EMBEDDING_MODEL` must name
+the model `tei-embed` is actually serving — `books:doctor` checks exactly that, because a TEI
+instance serves one model and never says so in a response. On real amd64 hardware neither the
+embed rate nor the rerank latency above applies; both are emulation artefacts.
+
+---
+
 ## Local development
 
 Standard Laravel Sail, with two local modifications:
@@ -411,6 +640,15 @@ they exist to fail loudly if someone reintroduces line-dropping or the letter-jo
 Step 2 adds `tests/Unit/{HeadingPatterns,PageLabelIndex,SectionDetector,BookStreamBuilder,
 BlockSegmenter,ChunkPacker,ChunkClassifier,TokenEstimator}Test.php` and
 `tests/Feature/{BookChunker,BookChunkCitation,BooksChunkCommand,BooksChunksCommand}Test.php`.
+
+Step 3 adds `tests/Unit/ReciprocalRankFusionTest.php` and
+`tests/Feature/{BookChunkEmbeddingSchema,BooksEmbedCommand,ChunkRetriever,SearchTheBooksTool,
+TeiRerankerProvider,Reranker,EddieAskCommand}Test.php`. **No test requires TEI to be running** —
+`Http::preventStrayRequests()` is on for the whole Feature suite and `phpunit.xml` points both
+TEI URLs at an unroutable host as a second backstop. `Embeddings::fake()` clones the
+*resolved* provider, so fake vectors come out at 1024 dimensions with nothing said. Vectors in
+tests are one-hot (`unitVector()`), because cosine similarity between two one-hot vectors is
+exactly 0 or exactly 1 — which makes an ordering assertion a fact rather than a probability.
 Several are regression pins in the same spirit: that chunks tile their input with nothing
 lost, that a short-line recipe block is never mistaken for a list, that overlap can only come
 from the immediately preceding text, and that the citation payload is exactly eight keys.

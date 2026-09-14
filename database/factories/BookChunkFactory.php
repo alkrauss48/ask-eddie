@@ -7,6 +7,7 @@ use App\Models\Book;
 use App\Models\BookChunk;
 use App\Services\Books\BookChunker;
 use App\Services\Books\ChunkClassifier;
+use App\Services\Books\ChunkEmbedder;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
@@ -64,6 +65,27 @@ class BookChunkFactory extends Factory
             'text' => '3%',
             'char_count' => 2,
             'word_count' => 1,
+        ]);
+    }
+
+    /**
+     * A chunk that has been through books:embed.
+     *
+     * The vector defaults to all zeroes only when one is not supplied, and
+     * callers that assert on ordering should pass a one-hot vector instead:
+     * cosine similarity between two one-hot vectors is exactly 0 or exactly 1,
+     * which makes an ordering assertion exact rather than nearly always true.
+     *
+     * @param  list<float>|null  $vector
+     */
+    public function embedded(?array $vector = null): static
+    {
+        return $this->state(fn (): array => [
+            'embedding' => $vector ?? array_fill(0, (int) config('books.embedding.dimensions'), 0.0),
+            'embedding_model' => (string) config('books.embedding.model'),
+            'embedding_dimensions' => (int) config('books.embedding.dimensions'),
+            'embedder_version' => ChunkEmbedder::VERSION,
+            'embedded_at' => now(),
         ]);
     }
 
