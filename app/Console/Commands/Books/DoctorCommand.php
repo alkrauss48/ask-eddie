@@ -5,6 +5,7 @@ namespace App\Console\Commands\Books;
 use App\Services\Books\BookImporter;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
 use Throwable;
 
@@ -12,7 +13,7 @@ class DoctorCommand extends Command
 {
     protected $signature = 'books:doctor';
 
-    protected $description = 'Check that the OCR toolchain, source disk and working directory are usable';
+    protected $description = 'Check that the OCR toolchain, source disk, working directory and inference services are usable';
 
     public function handle(BookImporter $importer): int
     {
@@ -21,6 +22,16 @@ class DoctorCommand extends Command
             $this->languageCheck(),
             $this->sourceDiskCheck($importer),
             $this->workingDirectoryCheck(),
+            $this->inferenceCheck(
+                'tei-embed',
+                (string) config('ai.providers.tei.url'),
+                (string) config('books.embedding.model'),
+            ),
+            $this->inferenceCheck(
+                'tei-rerank',
+                (string) config('ai.providers.tei-rerank.url'),
+                (string) config('books.retrieval.rerank.model'),
+            ),
         ];
 
         $this->newLine();
@@ -104,6 +115,53 @@ class DoctorCommand extends Command
                 ? implode(', ', $available)
                 : 'missing: '.implode(', ', $missing),
         ];
+    }
+
+    /**
+     * Whether a TEI instance is up, and whether it is serving what we think.
+     *
+     * The model check is the half that matters. A TEI container serves exactly
+     * one model and never says so in a response, so pointing the embedding
+     * provider at a container running something else produces vectors of the
+     * right width, in the right shape, with no error anywhere -- and a corpus
+     * whose queries are embedded by a different model than its passages, which
+     * degrades retrieval silently rather than loudly.
+     *
+     * @return array{name: string, ok: bool, detail: string}
+     */
+    private function inferenceCheck(string $name, string $url, string $expected): array
+    {
+        // The provider URL may carry an OpenAI-compatible /v1 suffix; /health
+        // and /info sit at the root.
+        $root = rtrim(preg_replace('#/v1/?$#', '', $url) ?? $url, '/');
+
+        try {
+            $health = Http::timeout(5)->get($root.'/health');
+
+            if (! $health->successful()) {
+                return [
+                    'name' => $name,
+                    'ok' => false,
+                    'detail' => "{$root}/health returned {$health->status()}; the model may still be loading",
+                ];
+            }
+
+            $served = (string) Http::timeout(5)->get($root.'/info')->json('model_id', '');
+
+            return [
+                'name' => $name,
+                'ok' => $served === $expected,
+                'detail' => $served === $expected
+                    ? "{$served} at {$root}"
+                    : "serving {$served}, but configuration asks for {$expected}",
+            ];
+        } catch (Throwable $exception) {
+            return [
+                'name' => $name,
+                'ok' => false,
+                'detail' => "unreachable at {$root}: ".$exception->getMessage(),
+            ];
+        }
     }
 
     /**

@@ -4,6 +4,8 @@ namespace App\Models;
 
 use App\Enums\ChunkKind;
 use Database\Factories\BookChunkFactory;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Casts\AsVector;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -72,6 +74,15 @@ class BookChunk extends Model
         'signals',
         'chunker_version',
         'classifier_version',
+        // The vector itself, the tsvector, and the provenance of the embedding.
+        // A single omission here is all it takes for retrieval bookkeeping to
+        // land in a prompt, which is why the payload is asserted by count.
+        'embedding',
+        'embedding_model',
+        'embedding_dimensions',
+        'embedder_version',
+        'embedded_at',
+        'search_vector',
         'created_at',
         'updated_at',
         'book',
@@ -105,7 +116,58 @@ class BookChunk extends Model
             'signals' => 'array',
             'chunker_version' => 'integer',
             'classifier_version' => 'integer',
+            'embedding' => AsVector::class,
+            'embedding_dimensions' => 'integer',
+            'embedder_version' => 'integer',
+            'embedded_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Select everything retrieval needs and nothing it does not.
+     *
+     * The vector is 4 KB a row and the stored tsvector is roughly the size of
+     * the text again; hydrating either for a page of citations is pure waste,
+     * and neither is ever read in PHP. Columns are named rather than excluded
+     * with a wildcard so that adding one to the table is a deliberate decision
+     * here too -- the same reason $hidden is spelled out above.
+     *
+     * @param  Builder<$this>  $query
+     */
+    public function scopeForRetrieval(Builder $query): void
+    {
+        $query->select([
+            'id',
+            'book_id',
+            'book_section_id',
+            'chunk_index',
+            'kind',
+            'is_indexable',
+            'section_title',
+            'heading',
+            'headings',
+            'text',
+            'char_count',
+            'word_count',
+            'token_estimate',
+            'overlap_chars',
+            'char_start',
+            'char_end',
+            'page_from',
+            'page_to',
+            'printed_page_from',
+            'printed_page_to',
+            'printed_pages_estimated',
+            'signals',
+            'chunker_version',
+            'classifier_version',
+            'embedding_model',
+            'embedding_dimensions',
+            'embedder_version',
+            'embedded_at',
+            'created_at',
+            'updated_at',
+        ]);
     }
 
     /**

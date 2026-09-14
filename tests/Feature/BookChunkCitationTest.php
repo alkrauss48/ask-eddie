@@ -49,6 +49,10 @@ it('keeps operational columns out of the payload', function (): void {
         'id', 'book_id', 'book_section_id', 'chunk_index', 'kind', 'is_indexable',
         'char_start', 'char_end', 'page_from', 'page_to', 'signals',
         'chunker_version', 'classifier_version', 'book', 'section',
+        // Step 3's columns. Each is one $hidden omission away from the prompt,
+        // and the vector would arrive there as 1,024 floats of noise.
+        'embedding', 'embedding_model', 'embedding_dimensions', 'embedder_version',
+        'embedded_at', 'search_vector',
     ] as $hidden) {
         expect($payload)->not->toHaveKey($hidden);
     }
@@ -164,4 +168,34 @@ it('lets a query exclude the chunks that should not be retrieved', function (): 
 
     expect(BookChunk::count())->toBe(5)
         ->and(BookChunk::where('is_indexable', true)->count())->toBe(3);
+});
+
+/**
+ * The payload must not widen once a chunk has actually been through retrieval.
+ * An embedded chunk carries six more columns and a populated tsvector, and the
+ * count is asserted rather than a subset checked, so any of them leaking fails
+ * here rather than in a bartender's answer.
+ */
+it('stays eight keys for a chunk that has been embedded', function (): void {
+    $chunk = citedChunk();
+    $chunk->forceFill([
+        'embedding' => unitVector(4),
+        'embedding_model' => (string) config('books.embedding.model'),
+        'embedding_dimensions' => (int) config('books.embedding.dimensions'),
+        'embedder_version' => 1,
+        'embedded_at' => now(),
+    ])->save();
+
+    $chunk = $chunk->fresh();
+
+    // The generated column really is populated, so this is not an empty check.
+    expect(DB::scalar('select search_vector::text != \'\' from book_chunks where id = ?', [$chunk->id]))
+        ->toBeTrue()
+        ->and($chunk->embedding)->toHaveCount(1024);
+
+    $payload = Arr::except($chunk->toArray(), ['embedding']);
+
+    expect(array_keys($payload))->toEqualCanonicalizing([
+        'book_title', 'author', 'year', 'section_title', 'heading', 'pages', 'citation', 'text',
+    ])->and($payload)->toHaveCount(8);
 });
