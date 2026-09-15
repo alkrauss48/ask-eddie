@@ -589,6 +589,7 @@ difference from using Cohere is the name in configuration.
 | `BOOKS_RETRIEVAL_LIMIT` | `8` | Passages handed to Eddie. |
 | `BOOKS_RERANK_ENABLED` | `true` | Set `false` on Apple Silicon. |
 | `BOOKS_RERANK_CANDIDATES` | `40` | Lower this before disabling the stage. |
+| `OPENAI_TEXT_MODEL` | `gpt-5.6-luna` | Model that writes Eddie's answers. |
 
 `ai.default` stays on OpenAI for text generation. `default_for_embeddings`,
 `default_for_reranking` and `default` resolve independently, which is exactly the

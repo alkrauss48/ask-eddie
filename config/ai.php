@@ -131,11 +131,23 @@ return [
             'url' => env('OLLAMA_URL', 'http://localhost:11434'),
         ],
 
+        /*
+        | The driver falls back to its own default text model when this block
+        | is absent, which is the expensive tier. Eddie's answers are short and
+        | the retrieval work is done by the time the model sees them, so the
+        | cheaper model is pinned here explicitly rather than left to the
+        | package's tier mapping, which can move between releases.
+        */
         'openai' => [
             'driver' => 'openai',
             'key' => env('OPENAI_API_KEY'),
             'url' => env('OPENAI_URL', 'https://api.openai.com/v1'),
             'store' => env('OPENAI_STORE', true),
+            'models' => [
+                'text' => [
+                    'default' => env('OPENAI_TEXT_MODEL', 'gpt-5.6-luna'),
+                ],
+            ],
         ],
 
         'openai-compatible' => [
