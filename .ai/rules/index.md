@@ -5,6 +5,7 @@ Before planning or editing, find the row whose globs match the file's path and r
 | Applies to | Rule file |
 | --- | --- |
 | app/Services/Books/**, app/Services/Books/PageTextNormalizer.php, app/Services/Books/PageExtractor.php, app/Services/Books/Drink*.php | .ai/rules/books.md |
+| config/books.php | .ai/rules/config.md |
 | docker/** | .ai/rules/docker.md |
 | compose.yaml | .ai/rules/general.md |
 | database/migrations/** | .ai/rules/migrations.md |

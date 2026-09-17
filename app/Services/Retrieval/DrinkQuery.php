@@ -20,4 +20,35 @@ readonly class DrinkQuery
         public ?int $toYear = null,
         public ?int $minBooks = null,
     ) {}
+
+    /**
+     * Whether this question is about a period rather than about the whole shelf.
+     *
+     * The distinction decides which numbers are counted, not merely which rows
+     * come back: see DrinkTally.
+     */
+    public function isWindowed(): bool
+    {
+        return $this->fromYear !== null || $this->toYear !== null;
+    }
+
+    /**
+     * The window as a reader would say it, for the survey's preamble.
+     */
+    public function yearRange(): ?string
+    {
+        if (! $this->isWindowed()) {
+            return null;
+        }
+
+        if ($this->fromYear !== null && $this->toYear !== null) {
+            return $this->fromYear === $this->toYear
+                ? (string) $this->fromYear
+                : "{$this->fromYear}–{$this->toYear}";
+        }
+
+        return $this->fromYear !== null
+            ? "{$this->fromYear} onwards"
+            : "up to {$this->toYear}";
+    }
 }

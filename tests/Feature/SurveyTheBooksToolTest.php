@@ -184,3 +184,96 @@ it('offers the model only the orders the surveyor implements', function (): void
 
     expect($schema['order']->toArray()['enum'])->toBe(DrinkQuery::ORDERS);
 });
+
+/**
+ * The defect this replaced: from_year and to_year narrowed which drinks came
+ * back and then ranked them on the corpus-wide column, so a survey of the 1860s
+ * returned the same drinks in the same order as a survey of everything. The
+ * question looked answered and was not.
+ */
+it('counts inside the window rather than filtering by it', function (): void {
+    // Everywhere across the whole span, but only once in the sixties.
+    talliedAcross('Gin Fizz', [1862, 1890, 1900, 1910, 1920]);
+    // Rarer overall, and the drink that decade actually printed.
+    talliedAcross('Whiskey Sour', [1862, 1866, 1868]);
+
+    $rows = surveyRows(surveyTool()->handle(new Request(['from_year' => 1860, 'to_year' => 1869])));
+
+    expect($rows[0]['name'])->toBe('Whiskey Sour')
+        ->and($rows[0]['books'])->toBe(3)
+        ->and($rows[1]['name'])->toBe('Gin Fizz')
+        // One, not the five the whole shelf prints it in.
+        ->and($rows[1]['books'])->toBe(1);
+});
+
+it('reports the years the window holds, not the drink whole span', function (): void {
+    talliedAcross('Gin Fizz', [1862, 1890, 1930]);
+
+    $rows = surveyRows(surveyTool()->handle(new Request(['from_year' => 1880, 'to_year' => 1900])));
+
+    expect($rows[0]['years'])->toBe('1890');
+});
+
+/**
+ * A citation from outside the window is a true sentence about the wrong books.
+ */
+it('cites only a printing the window contains', function (): void {
+    talliedAcross('Gin Fizz', [1862, 1935]);
+
+    $rows = surveyRows(surveyTool()->handle(new Request(['from_year' => 1930])));
+
+    expect($rows[0]['citations'])->toHaveCount(1)
+        ->and($rows[0]['citations'][0])->toContain('1935')
+        ->and($rows[0]['citations'][0])->not->toContain('1862');
+});
+
+it('frames a windowed tally by the books the window holds', function (): void {
+    talliedAcross('Gin Fizz', [1862, 1866]);
+
+    $output = surveyTool()->handle(new Request(['from_year' => 1860, 'to_year' => 1869]));
+
+    expect($output)->toStartWith('Tallied over 1860–1869 only')
+        ->and($output)->toContain('2 books')
+        ->and($output)->toContain('not out of the whole shelf');
+});
+
+/**
+ * first_year is the earliest book on this shelf that prints a drink, which is
+ * not where the drink came from. The shelf is thin before 1880, so the two are
+ * reliably different and Eddie has no way to tell from the rows alone.
+ */
+it('says that first and last printing are facts about the shelf', function (): void {
+    tallied();
+
+    $output = surveyTool()->handle(new Request(['order' => 'earliest']));
+
+    expect($output)->toContain('not the same as when it was invented');
+});
+
+it('leaves the chronology caveat off a ranking that is not chronological', function (): void {
+    tallied();
+
+    expect(surveyTool()->handle(new Request(['order' => 'books'])))
+        ->not->toContain('not the same as when it was invented');
+});
+
+/**
+ * The tally counts drinks, and DrinkClassifier decides which rows are one. The
+ * 7,011 single-book OCR artefacts stay in the database and out of every answer.
+ */
+it('never counts a row the classifier set aside', function (): void {
+    Drink::factory()->named('Gin Fizz')->create(['book_count' => 19]);
+    Drink::factory()->named('Thiet Dtn')->uncountable()->create(['book_count' => 40]);
+
+    $rows = surveyRows(surveyTool()->handle(new Request([])));
+
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['name'])->toBe('Gin Fizz');
+});
+
+it('will not find a set-aside row even when asked for it by name', function (): void {
+    Drink::factory()->named('Thiet Dtn')->uncountable()->create();
+
+    expect(surveyTool()->handle(new Request(['name' => 'Thiet Dtn'])))
+        ->toContain('No drink on the shelf matches that');
+});

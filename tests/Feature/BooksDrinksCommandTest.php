@@ -236,3 +236,99 @@ it('says so rather than printing an empty table when nothing is tallied', functi
         ->expectsOutputToContain('Nothing tallied yet')
         ->assertFailed();
 });
+
+/**
+ * A drink one book printed is set aside, because that is where this corpus's
+ * OCR wreckage lives -- but its mentions stay, which is the whole difference
+ * between classifying and deleting.
+ */
+it('sets aside a name only one book printed without losing its mentions', function (): void {
+    bookWithDrinks();
+
+    $this->artisan('books:drinks')->assertSuccessful();
+
+    expect(Drink::query()->where('is_countable', false)->count())->toBe(2)
+        ->and(Drink::query()->where('is_countable', true)->count())->toBe(0)
+        ->and(DrinkMention::query()->count())->toBe(2);
+});
+
+it('counts a name a second book also printed', function (): void {
+    bookWithDrinks();
+    bookWithDrinks(['title' => 'The Savoy Cocktail Book', 'year' => 1930]);
+
+    $this->artisan('books:drinks')->assertSuccessful();
+
+    expect(Drink::query()->where('is_countable', true)->pluck('canonical_key')->sort()->values()->all())
+        ->toBe(['bluelady', 'ginsling']);
+});
+
+it('records the measurements behind every verdict', function (): void {
+    bookWithDrinks();
+
+    $this->artisan('books:drinks')->assertSuccessful();
+
+    $signals = Drink::query()->where('canonical_key', 'bluelady')->value('signals');
+
+    expect($signals['reason'])->toBe('single_book')
+        ->and($signals)->toHaveKeys(['book_count', 'recipe_share', 'heading_families']);
+});
+
+/**
+ * Editing the noise list must not cost a re-extraction of the whole shelf:
+ * classification is a pure function of stored mentions.
+ */
+it('re-derives countability without re-reading a chunk', function (): void {
+    bookWithDrinks();
+    bookWithDrinks(['title' => 'The Savoy Cocktail Book', 'year' => 1930]);
+    $this->artisan('books:drinks')->assertSuccessful();
+
+    config()->set('books.drinks.classification.noise_headings', ['bluelady']);
+
+    $this->artisan('books:drinks --reclassify')
+        ->expectsOutputToContain('1 drink(s) countable')
+        ->assertSuccessful();
+
+    expect(Drink::query()->where('canonical_key', 'bluelady')->value('is_countable'))->toBeFalse()
+        ->and(Drink::query()->where('canonical_key', 'ginsling')->value('is_countable'))->toBeTrue()
+        // Untouched: reclassifying reads mentions and writes drinks.
+        ->and(DrinkMention::query()->count())->toBe(4);
+});
+
+it('leaves no book reporting itself stale after a reclassify', function (): void {
+    bookWithDrinks();
+    $this->artisan('books:drinks')->assertSuccessful();
+    $this->artisan('books:drinks --reclassify')->assertSuccessful();
+
+    $extractor = app(DrinkExtractor::class);
+
+    expect($extractor->isStale(Book::query()->firstOrFail()))->toBeFalse();
+});
+
+it('proposes nothing to review on a corpus with nothing to propose', function (): void {
+    bookWithDrinks();
+    $this->artisan('books:drinks')->assertSuccessful();
+
+    $this->artisan('books:drinks --noise')
+        ->expectsOutputToContain('Nothing reads as a sentence opener')
+        ->assertSuccessful();
+
+    $this->artisan('books:drinks --suffixes')
+        ->expectsOutputToContain('No "X" / "X Cocktail" pairs')
+        ->assertSuccessful();
+});
+
+/**
+ * Proposed for a human, never merged: "Gin"/"Gin Cocktail" are two drinks and
+ * "Manhattan"/"Manhattan Cocktail" are one, and nothing in the strings says
+ * which is which.
+ */
+it('proposes a suffix pair without merging it', function (): void {
+    Drink::factory()->named('Manhattan')->create(['book_count' => 10]);
+    Drink::factory()->named('Manhattan Cocktail')->create(['book_count' => 20]);
+
+    $this->artisan('books:drinks --suffixes')
+        ->expectsOutputToContain('NOT safe to merge')
+        ->assertSuccessful();
+
+    expect(Drink::query()->count())->toBe(2);
+});

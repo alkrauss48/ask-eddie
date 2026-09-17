@@ -239,6 +239,44 @@ function tallied(array $drinkOverrides = [], int $books = 1): Drink
     return $drink->fresh();
 }
 
+/**
+ * One drink printed once in each of the given years, one book per year.
+ *
+ * The shape a windowed survey needs: aggregates on the row describe the whole
+ * span, and a question bounded to part of it must count only the part. Tests
+ * that assert "3 of my 27 books" against "1860-1869" need both numbers to be
+ * real, which means real mentions carrying real book_years.
+ *
+ * @param  list<int>  $years
+ */
+function talliedAcross(string $name, array $years): Drink
+{
+    $drink = Drink::factory()->named($name)->create([
+        'mention_count' => count($years),
+        'book_count' => count($years),
+        'first_year' => min($years),
+        'last_year' => max($years),
+    ]);
+
+    foreach ($years as $index => $year) {
+        $book = Book::factory()->create([
+            'title' => "A Manual of {$year}",
+            'author' => 'A Bartender',
+            'year' => $year,
+        ]);
+
+        $chunk = BookChunk::factory()->for($book)->create([
+            'text' => strtoupper($name).' 1/2 Curaçao.',
+            'page_from' => 10 + $index,
+            'page_to' => 10 + $index,
+        ]);
+
+        DrinkMention::factory()->for($drink)->forChunk($chunk, strtoupper($name))->create();
+    }
+
+    return $drink->fresh();
+}
+
 function surveyor(): DrinkSurveyor
 {
     return app(DrinkSurveyor::class);

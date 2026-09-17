@@ -624,12 +624,14 @@ book_chunks (is_indexable)
      │  DrinkHeadingScanner    re-scan stored chunk text with HeadingPatterns
      │  DrinkNameNormalizer    "BLUE LADY" / "Blue Lady." / "128. Gin Sangaree." -> one key
      │  DrinkClusterer         exact key by default; one edit only behind a flag
+     │  DrinkClassifier        is this row a drink? -> is_countable + signals
      ▼
 drinks + drink_mentions
      │
-     │  DrinkSurveyor          count, rank, filter by year -> DrinkSummary
+     │  DrinkSurveyor          count and rank the countable rows
+     │  DrinkTally             the stored columns, or recounted inside a year window
      ▼
-SurveyTheBooks -> EddieAgent
+DrinkSummary -> SurveyTheBooks -> EddieAgent
 ```
 
 **No model runs in any of this.** The signal was already in the corpus: `HeadingPatterns`
@@ -651,6 +653,77 @@ index lists every drink in it exactly once, with a page number pointing somewher
 does not cover — counting it would roughly double every recipe book's tally and attach
 un-citable pages to it.
 
+### Which rows are drinks
+
+The first full run produced 9,437 rows, and 7,011 of them were printed in exactly one book.
+That tail is where this corpus's OCR wreckage lives — "Thiet Dtn", "Caucliois", and prose a
+heading pattern caught ("Israel Hatch announced daily stages between"). Every one of them is a
+real string at a real offset, so `--verify` has no objection to any of it. What it ruins is
+the answer: ordering by `first_year` returned "T He", "This", "There" and "Page" out of the
+1757 book before it returned a drink, and 9,437 was not a number Eddie could say out loud.
+
+`DrinkClassifier` sets `drinks.is_countable` and records its measurements in `drinks.signals`,
+exactly as `ChunkClassifier` sets `book_chunks.is_indexable` — and for a stronger reason than
+it has there. **Nothing is deleted.** A mention is evidence that a book printed a string at an
+offset, and that stays true whatever the verdict. Excluding a row from a tally is then a
+query, re-including it is an update, and `signals` is the receipt for which it was and why.
+The column defaults to `true`, so a fresh `migrate` with no `books:drinks` behind it leaves
+the tally behaving exactly as it did rather than silently emptying it.
+
+`min_books` (2) is the rule that does the work, and it is deliberately not a quality
+threshold: a drink two books printed independently is a drink however odd it looks, which is
+why "Bishop", "Shandy Gaff" and "Stone Fence" survive it. 9,437 rows became 2,382 countable,
+and the head of the tally came out byte-identical.
+
+Two findings from the corpus shaped the rest, and both cut against the obvious design:
+
+- **Recipe-chunk share does not separate drinks from noise.** It reads like the discriminator
+  to reach for, and the measurement says otherwise: below a quarter sit "Gothic Punch",
+  "Bilberry Cordial", "Hock Cobbler" and "Soldiers Camping Punch" — real drinks this shelf
+  happens to print only inside prose — and the 25–50% band is almost entirely real. The share
+  is recorded in `signals` for a later pass with better evidence. It decides nothing today.
+- **The surviving function words are a list, not a heuristic.** "This" is in 6 books and
+  "Bishop" in 27, and nothing but English separates them. So they live in
+  `books.drinks.classification.noise_headings`, beside `stop_headings`. Several are drop-cap
+  artefacts, where a decorative initial was scanned as its own word: "Ne-Half" is one-half,
+  "Uice" is juice, "Hree" is three, "T He" is the.
+
+Positive recognition runs before any test of shape, the discipline `ChunkClassifier` uses: a
+book that numbered its own recipes is the best evidence available that the thing numbered was
+one, so a numbered heading is countable whatever the name looks like. The ingredient-line
+pattern is anchored to the start of the name for the same reason — "White of one egg" goes,
+"Brandy Egg Nogg" and "Egg Phosphate" stay.
+
+Classification is a pure function of stored mentions, so `DrinkClassifier::VERSION` moves
+independently of the extractor and `books:drinks --reclassify` repairs a verdict without
+re-reading a single chunk. Editing the noise list is the common case, and it must not cost a
+pass over 102 books.
+
+### A year window is counted inside, not filtered by
+
+`from_year`/`to_year` used to narrow which drinks came back and then rank them on the
+corpus-wide `book_count`, so a survey of 1860–1869 returned the same eight drinks in the same
+order as a survey of everything. The window was in the query and not in the arithmetic. The
+question looked answered and was not.
+
+`DrinkTally` carries the counts now, because the same four numbers have two meanings. With no
+bounds they are the materialized columns on `drinks`. With bounds they are recounted over the
+mentions inside the window and ranked on *those* — "Mint Julep" is in 27 books on this shelf,
+and in 3 of the 6 the shelf holds from the 1860s.
+
+Two things have to travel with the window, or the answer is quietly false:
+
+- **Citations.** Asked about the sixties, Eddie must not cite an 1899 page. A citation from
+  outside the window is a true sentence about the wrong books.
+- **The denominator.** A windowed preamble names how many books the window holds, because
+  "3 books print this" reads as a claim about the shelf when the 1860s only *has* 6 books —
+  and one of them supplies four fifths of the decade's names.
+
+`also_printed_as` stays corpus-wide, since `drinks.aliases` is the extractor's receipt of what
+a merge folded together. Inside a window it is recounted from the window's own mentions
+instead: a spelling only a 1937 book used is not an answer about the 1860s, and aliases cannot
+say which years a spelling came from.
+
 ### Decisions worth knowing
 
 - **A wrong merge fabricates a citation that passes every check.** If "Brandy Sour" and
@@ -660,6 +733,18 @@ un-citable pages to it.
   that runs by default; one-edit matching sits behind `BOOKS_DRINKS_FUZZY` and a
   `--merges` review, every merge leaves a receipt in `drinks.aliases`, and
   `config('books.drinks.aliases'/'splits')` wins over the algorithm in both directions.
+- **"X" and "X Cocktail" is a review, never a rule.** There are 394 such pairs.
+  "Manhattan"/"Manhattan Cocktail" and "Martini"/"Martini Cocktail" are the same drink;
+  "Champagne", "Gin" and "Brandy" are not, because there the bare name is the ingredient. The
+  discriminator is "is the bare name also an ingredient", which is a judgment and not a regex,
+  so a blanket suffix-strip in `DrinkNameNormalizer::key()` must not be added. `--suffixes`
+  prints the pairs with both book counts, and the safe ones get pasted into
+  `books.drinks.aliases`. An ingredient layer would supply the missing discriminator later.
+- **`--noise` and `--suffixes` propose and write nothing.** The shape that catches "This" and
+  "There" — a one-word name seen only as a paragraph's opening capital — also catches
+  "Kummel", "Cooler" and "Tequila", which are drinks. A human decides, what they decide goes
+  into config, and `--reclassify` applies it. Suggestion in, never a write: the same doctrine
+  fuzzy merging follows.
 - **Embeddings are not used for name identity, deliberately.** bge-m3 places "Blue Lady"
   nearer "Pink Lady", and "Gin Fizz" nearer "Gin Rickey", than either sits to its own OCR
   misreading — it optimises for the opposite of what this needs. Vectors also cannot be
@@ -693,6 +778,14 @@ retrieved. They are rendered as measures, and Eddie says the yardstick out loud:
   reaching for it across decades. "Rare, but it never went away," never "the books call it
   underrated."
 
+`first_year` is a third measure of the same kind, and the easiest to overstate: it is the
+earliest book *on this shelf* that prints a drink, not where the drink came from, and nothing
+in the rows themselves says so. The shelf is thin before 1880 — six books from the 1860s, one
+of them doing most of the talking — so the two are reliably different. A survey ordered by
+first or last printing carries that caveat in its preamble, and Eddie's instructions have him
+say it in his own voice: "the oldest I've got it is Thomas, '62," never "that's where it
+started."
+
 He may draw his own conclusion aloud, plainly as his own opinion — that is a bartender's
 privilege. He may not put a judgement in a book's mouth. Mining commendation language out of
 the prose chunks that name a drink would be a real praise signal, and it is a different
@@ -707,13 +800,18 @@ because the chunk text is already stored. The rest check that a mention never ci
 chunk does not, that none points at a chunk retrieval excludes, that every stored aggregate
 survives recomputation, that every canonical name still folds to its own key, that every alias
 names a spelling some mention records, and that the corpus holds exactly one
-`(extractor, normalizer)` version pair.
+`(extractor, normalizer, classifier)` version triple. A division heading reaching the `drinks`
+table is still reported as a failure rather than quietly absorbed: the classifier marks it
+uncountable, but its being there at all means the scanner let one through.
 
 ### Commands
 
 | Command | What it does |
 | --- | --- |
-| `books:drinks` | Tallies drink names. `--book=slug` (repeatable), `--force`, `--dry-run`, `--verify`, `--merges`, `--show=`. Holds a cache lock; a run is seconds. |
+| `books:drinks` | Tallies drink names. `--book=slug` (repeatable), `--force`, `--dry-run`, `--verify`, `--merges`, `--top=`, `--show=`. Holds a cache lock; a run is seconds. |
+| `books:drinks --reclassify` | Re-derives countability from stored mentions. Reads no chunk text, rewrites no mention, and restamps each book's `classifier_version` so nothing keeps reporting itself stale. |
+| `books:drinks --noise` | Proposes one-word names seen only as a paragraph's opening capital, for `noise_headings`. Writes nothing. |
+| `books:drinks --suffixes` | Lists the `"X"` / `"X Cocktail"` pairs with both book counts, for `books.drinks.aliases`. Writes nothing. |
 
 `books:status` gains a `Drinks` column. A dash down the prose half of the shelf is the corpus
 telling the truth about itself, not a failure.
@@ -728,10 +826,15 @@ telling the truth about itself, not a failure.
 | `BOOKS_DRINKS_SURVEY_LIMIT` | `10` | Drinks per survey. |
 | `BOOKS_DRINKS_SURVEY_MAX` | `25` | Ceiling the model's own limit is clamped to. |
 | `BOOKS_DRINKS_SURVEY_CITATIONS` | `3` | Printed occurrences offered per drink. |
+| `BOOKS_DRINKS_MIN_BOOKS` | `2` | How many books must print a name before it is countable. The rule that carries the tail. |
+| `BOOKS_DRINKS_MAX_WORDS` | `6` | Longer than this is a sentence a heading pattern caught. |
+| `BOOKS_DRINKS_MIN_LETTER_RATIO` | `0.6` | Below this, a "name" is mostly digits and scanner marks. |
 
 `config('books.drinks.stop_headings')` holds the folded keys for divisions of a book —
 `punches`, `cocktails`, `index` — because finding another one is a corpus finding, which should
-be an edit rather than a deploy.
+be an edit rather than a deploy. `config('books.drinks.classification.noise_headings')` is the
+same kind of list for the same kind of reason, and `--reclassify` is what applies an edit to
+it.
 
 ---
 
@@ -787,7 +890,8 @@ Chunking services take plain strings and unsaved models, so the algorithmic work
 tested with no database. Real page text lives in `tests/Fixtures/Books/`, named for the page
 it was exported from, so a failing assertion can be checked against the actual scan.
 
-Step 4 adds `tests/Unit/{DrinkNameNormalizer,DrinkHeadingScanner,DrinkCoverage}Test.php` — all
+Step 4 adds `tests/Unit/{DrinkNameNormalizer,DrinkHeadingScanner,DrinkCoverage,
+DrinkClassifier}Test.php` — all
 database-free, like the chunking tests — and
 `tests/Feature/{BooksDrinksCommand,DrinkSummary,SurveyTheBooksTool,EddieAgent}Test.php`. Three
 are worth knowing about. `DrinkNameNormalizerTest` asserts that "Brandy Sour" and "Brandy Soup"
@@ -797,3 +901,13 @@ counts are identical, which is what catches an aggregate that was incremented ra
 recomputed. And `SurveyTheBooksToolTest` pins that "the shelf has not been tallied" and
 "nothing matched that" stay two different sentences — collapse them and Eddie reports an
 absence from the books when what happened is that nobody counted them.
+
+The countability and windowing tests are mostly assertions that a rule does *not* fire, which
+is where the cost of one lands. `DrinkClassifierTest` pins that "Bishop", "Shandy Gaff",
+"Stone Fence", "Black Stripe" and "Flip" stay countable despite being short and odd-looking,
+that "Gothic Punch" stays countable on a recipe share of zero, and that "Kummel" is proposed
+by `--noise` and counted anyway. `DrinkCoverageTest` pins the windowed and chronological
+preambles, including that a shelf whose every row was set aside has still been tallied — the
+distinction `SurveyTheBooks` exists to keep. And `SurveyTheBooksToolTest` pins the ranking
+defect directly: a drink in five books across the whole span ranks *below* one in three books
+from the 1860s, when the question is about the 1860s.
