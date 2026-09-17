@@ -1,7 +1,12 @@
 <?php
 
 use App\Enums\PageStatus;
+use App\Models\Book;
+use App\Models\BookChunk;
 use App\Models\BookPage;
+use App\Models\Drink;
+use App\Models\DrinkMention;
+use App\Services\Retrieval\DrinkSurveyor;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
@@ -194,4 +199,47 @@ function fakeEmbeddings(array $vectors = []): FakeEmbeddingGateway
             return Embeddings::fakeEmbedding((int) config('books.embedding.dimensions'));
         }, $prompt->inputs);
     });
+}
+
+/**
+ * A tallied drink with real mentions behind it, citations and all.
+ *
+ * Shared rather than defined in one test file, because both the payload tests
+ * and the tool tests need the same shape and either has to be runnable on its
+ * own with --filter.
+ */
+function tallied(array $drinkOverrides = [], int $books = 1): Drink
+{
+    $drink = Drink::factory()->named('Blue Lady')->create($drinkOverrides + [
+        'mention_count' => $books,
+        'book_count' => $books,
+        'first_year' => 1931,
+        'last_year' => 1931,
+    ]);
+
+    for ($index = 0; $index < $books; $index++) {
+        $book = Book::factory()->create([
+            'title' => 'Old Waldorf Bar Days',
+            'author' => 'Albert Stevens Crockett',
+            'year' => 1931 + $index,
+        ]);
+
+        $chunk = BookChunk::factory()->for($book)->create([
+            'section_title' => 'Concerning the Curriculum',
+            'text' => 'BLUE LADY 1/2 Blue Curaçao.',
+            'page_from' => 119,
+            'page_to' => 119,
+            'printed_page_from' => '107',
+            'printed_page_to' => '107',
+        ]);
+
+        DrinkMention::factory()->for($drink)->forChunk($chunk, 'BLUE LADY')->create();
+    }
+
+    return $drink->fresh();
+}
+
+function surveyor(): DrinkSurveyor
+{
+    return app(DrinkSurveyor::class);
 }

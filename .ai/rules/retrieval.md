@@ -5,6 +5,7 @@ paths:
   - app/Tools/SearchTheBooks.php
   - app/Agents/EddieAgent.php
   - app/Services/Books/ChunkEmbedder.php
+  - 'app/Services/Retrieval/Drink*.php'
 ---
 
 # Retrieval
@@ -54,3 +55,12 @@ Two things had to be capped to make it run at all: `--max-batch-tokens 4096` (TE
 It is dense-only, passes the query through as a string (see the first rule), gives no hook for `set hnsw.ef_search`, and truncates to its own limit before fusion could see both lists. `SimilaritySearch`'s public closure constructor is the package's own escape hatch; `SearchTheBooks` wraps `ChunkRetriever` instead, which is supported rather than a fork.
 
 Reranking through the package needed one small provider: laravel/ai ships it for Bedrock, Jina, Cohere and VoyageAI only, and `Collection::rerank()` always dispatches to `Reranking::of()` — its `Closure $by` is a field resolver, not a scorer. `AiManager extends MultipleInstanceManager`, so `Ai::extend('tei-rerank', …)` in `AppServiceProvider::boot()` registers `TeiRerankerProvider` cleanly, and `Reranking::fake()` then works on it unchanged.
+
+## The survey payload is six keys, and coverage travels with it
+`DrinkSummary::payload()` is what the language model is handed: name, books, mentions, years, also_printed_as, citations. Asserted by count in DrinkSummaryTest and SurveyTheBooksToolTest, the same discipline BookChunkCitationTest holds over the eight-key passage payload. No id, no slug, no canonical_key, no version, no score.
+
+`Drink::toArray()` deliberately never reaches a prompt — unlike BookChunk, which had to become its own payload because SimilaritySearch serializes the model out of the app's reach. Keep the value object; do not start passing models.
+
+Every survey carries `DrinkCoverage::sentence()` in its preamble. The narrative books print no drink headings, so a tally is a claim about the books it could count — without that sentence Eddie states a corpus-wide claim he cannot support, and "most of my books" and "all my books" become the same sentence to him.
+
+SurveyTheBooks fails closed like AiReranker: catch Throwable, report(), return a sentence. Three distinct returns — not-yet-tallied, nothing-matched, tally-unavailable — because a bare `[]` reads to the model as "no such drinks exist", which is a false claim about the books.

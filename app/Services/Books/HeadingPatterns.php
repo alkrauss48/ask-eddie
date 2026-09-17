@@ -193,14 +193,22 @@ class HeadingPatterns
         }
 
         return $this->opensARecipe($nextLine)
-            ? new HeadingMatch(trim($line, ' 	.:;—-'), self::TITLE_LINE)
+            ? new HeadingMatch($this->trimEdges($line), self::TITLE_LINE)
             : null;
     }
 
     /**
      * Whether a line reads like the first measure of a recipe.
+     *
+     * Public because the drink layer needs the same judgement and must not
+     * arrive at it separately. matchCapsLine() flags every caps line
+     * sectionLike, so in a book that shouts its drink names -- "GIN SLING."
+     * above its ingredients -- sectionLike alone cannot tell a division from a
+     * drink. What follows the line can, and this is already how the title-case
+     * family decides. A second copy of it would drift, which is the thing this
+     * class exists to prevent.
      */
-    private function opensARecipe(string $line): bool
+    public function opensARecipe(string $line): bool
     {
         $line = trim($line);
 

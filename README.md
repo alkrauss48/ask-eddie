@@ -14,6 +14,9 @@ Getting there takes two halves:
 3. **Give it a voice.** Embed the chunks into pgvector, retrieve against them with a hybrid
    query, and serve them through Eddie — see
    [Step 3: embed, retrieve, answer](#step-3-embed-retrieve-answer).
+4. **Let him count.** Fold the printed headings into canonical drinks so a question about the
+   shelf as a whole is a query rather than a guess — see
+   [Step 4: the tally](#step-4-the-tally).
 
 ---
 
@@ -589,6 +592,7 @@ difference from using Cohere is the name in configuration.
 | `BOOKS_RETRIEVAL_LIMIT` | `8` | Passages handed to Eddie. |
 | `BOOKS_RERANK_ENABLED` | `true` | Set `false` on Apple Silicon. |
 | `BOOKS_RERANK_CANDIDATES` | `40` | Lower this before disabling the stage. |
+| `OPENAI_TEXT_MODEL` | `gpt-5.6-luna` | Model that writes Eddie's answers. |
 
 `ai.default` stays on OpenAI for text generation. `default_for_embeddings`,
 `default_for_reranking` and `default` resolve independently, which is exactly the
@@ -602,6 +606,132 @@ The two TEI containers must exist in production too, and `BOOKS_EMBEDDING_MODEL`
 the model `tei-embed` is actually serving — `books:doctor` checks exactly that, because a TEI
 instance serves one model and never says so in a response. On real amd64 hardware neither the
 embed rate nor the rerank latency above applies; both are emulation artefacts.
+
+---
+
+## Step 4: the tally
+
+Retrieval answers "what goes in a Blue Lady?" with eight passages. It cannot answer "what
+cocktails come up time and time again?", because eight passages cannot support a claim about
+24,926 — and a model asked to make one from them answers from memory instead, which is the
+failure the whole corpus exists to prevent.
+
+So drinks get an identity, and a query path of their own.
+
+```
+book_chunks (is_indexable)
+     │
+     │  DrinkHeadingScanner    re-scan stored chunk text with HeadingPatterns
+     │  DrinkNameNormalizer    "BLUE LADY" / "Blue Lady." / "128. Gin Sangaree." -> one key
+     │  DrinkClusterer         exact key by default; one edit only behind a flag
+     ▼
+drinks + drink_mentions
+     │
+     │  DrinkSurveyor          count, rank, filter by year -> DrinkSummary
+     ▼
+SurveyTheBooks -> EddieAgent
+```
+
+**No model runs in any of this.** The signal was already in the corpus: `HeadingPatterns`
+recognises four heading shapes read off these actual pages, and it already computed a
+`family` and a `sectionLike` flag that `ChunkPacker` then threw away. A full pass is a regex
+over 5.5 MB of stored text and finishes in seconds.
+
+### Why it re-scans chunk text rather than reading `chunk.headings`
+
+`BlockSegmenter::headingOf()` only tests the first line of each paragraph block, so a heading
+printed on the fifth line of a block never reached that column — in books cut either way, not
+just the packed ones. Re-scanning recovers those, and costs nothing: no stream, no PDF, the
+same relationship `ChunkClassifier` has to `BookChunker`.
+
+It feeds on every `is_indexable` chunk rather than only the recipe kinds, which keeps this
+layer and the citation layer drawing from one universe. What that predicate *excludes* matters
+more: index and contents chunks are `is_indexable = false`, so they never arrive. A book's own
+index lists every drink in it exactly once, with a page number pointing somewhere the chunk
+does not cover — counting it would roughly double every recipe book's tally and attach
+un-citable pages to it.
+
+### Decisions worth knowing
+
+- **A wrong merge fabricates a citation that passes every check.** If "Brandy Sour" and
+  "Brandy Soup" fold together, the survey hands Eddie a row named Brandy Sour carrying a real
+  book, a real page and a real byte offset — on which the word printed is "Soup". The offsets
+  verify, the citation resolves, and a guest cannot tell. So exact key match is the only merge
+  that runs by default; one-edit matching sits behind `BOOKS_DRINKS_FUZZY` and a
+  `--merges` review, every merge leaves a receipt in `drinks.aliases`, and
+  `config('books.drinks.aliases'/'splits')` wins over the algorithm in both directions.
+- **Embeddings are not used for name identity, deliberately.** bge-m3 places "Blue Lady"
+  nearer "Pink Lady", and "Gin Fizz" nearer "Gin Rickey", than either sits to its own OCR
+  misreading — it optimises for the opposite of what this needs. Vectors also cannot be
+  re-derived after a model change, which breaks the version-constant contract the rest of the
+  pipeline rests on. Their one legitimate use here is offline: propose candidate pairs for a
+  human to paste into config.
+- **A caps line cannot be told from a division by its flag.** `matchCapsLine()` marks every
+  shouted line `sectionLike`, so in a book that shouts its drink names — "GIN SLING." above
+  its ingredients — every drink carries it. What follows the line decides instead, which is
+  why `HeadingPatterns::opensARecipe()` is now public rather than copied.
+- **Aggregates are recomputed, never incremented.** They are materialized so they can be
+  *checked*: `--verify` recomputes every one from `drink_mentions` and asserts equality. An
+  incremented count drifts silently across a partial re-run with nothing to report it.
+- **Coverage is reported as concentration, not as a count of books.** The first full run
+  settled this: all 102 books yield at least one drink name — the tavern histories included —
+  so "counted 102 of 102" reads as complete coverage while the 44 packed books supply a
+  seventh of the tally between them. The Art of Drinking (1890) contributes exactly one name
+  from 45 chunks. So every survey's preamble names the smallest set of books supplying nine
+  parts in ten of the count (56 of 102), which needs no threshold to tune and is the fact
+  Eddie actually needs: "most of my books" is a claim about where a tally came from, not about
+  how many were opened.
+
+### What Eddie may and may not conclude
+
+No book in this corpus rates a drink, so "underrated" and "crowd-pleasing" are not facts to be
+retrieved. They are rendered as measures, and Eddie says the yardstick out loud:
+
+- **crowd-pleasing** ≈ a high `book_count` over a wide `first_year`..`last_year` span — many
+  bartenders printed it, and kept printing it.
+- **underrated** ≈ a low `book_count` over a wide span — few books print it, yet someone kept
+  reaching for it across decades. "Rare, but it never went away," never "the books call it
+  underrated."
+
+He may draw his own conclusion aloud, plainly as his own opinion — that is a bartender's
+privilege. He may not put a judgement in a book's mouth. Mining commendation language out of
+the prose chunks that name a drink would be a real praise signal, and it is a different
+problem: it is not built here.
+
+### `books:drinks --verify`
+
+Eleven invariants, each a query. The one that matters is the first: every mention's
+`raw_heading` is byte-identical to its chunk's text at the offset it claims. That proves the
+offset, which proves the page range, which proves the citation — and costs no re-assembly,
+because the chunk text is already stored. The rest check that a mention never cites a page its
+chunk does not, that none points at a chunk retrieval excludes, that every stored aggregate
+survives recomputation, that every canonical name still folds to its own key, that every alias
+names a spelling some mention records, and that the corpus holds exactly one
+`(extractor, normalizer)` version pair.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `books:drinks` | Tallies drink names. `--book=slug` (repeatable), `--force`, `--dry-run`, `--verify`, `--merges`, `--show=`. Holds a cache lock; a run is seconds. |
+
+`books:status` gains a `Drinks` column. A dash down the prose half of the shelf is the corpus
+telling the truth about itself, not a failure.
+
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOOKS_DRINKS_FUZZY` | `false` | One-edit merging. Read `--merges` before turning it on. |
+| `BOOKS_DRINKS_FUZZY_MIN_LENGTH` | `6` | Short keys collide too easily to merge. |
+| `BOOKS_DRINKS_FUZZY_MAX_EDITS` | `1` | An edit budget, not a ratio. |
+| `BOOKS_DRINKS_SURVEY_LIMIT` | `10` | Drinks per survey. |
+| `BOOKS_DRINKS_SURVEY_MAX` | `25` | Ceiling the model's own limit is clamped to. |
+| `BOOKS_DRINKS_SURVEY_CITATIONS` | `3` | Printed occurrences offered per drink. |
+
+`config('books.drinks.stop_headings')` holds the folded keys for divisions of a book —
+`punches`, `cocktails`, `index` — because finding another one is a corpus finding, which should
+be an edit rather than a deploy.
 
 ---
 
@@ -656,3 +786,14 @@ from the immediately preceding text, and that the citation payload is exactly ei
 Chunking services take plain strings and unsaved models, so the algorithmic work is unit
 tested with no database. Real page text lives in `tests/Fixtures/Books/`, named for the page
 it was exported from, so a failing assertion can be checked against the actual scan.
+
+Step 4 adds `tests/Unit/{DrinkNameNormalizer,DrinkHeadingScanner,DrinkCoverage}Test.php` — all
+database-free, like the chunking tests — and
+`tests/Feature/{BooksDrinksCommand,DrinkSummary,SurveyTheBooksTool,EddieAgent}Test.php`. Three
+are worth knowing about. `DrinkNameNormalizerTest` asserts that "Brandy Sour" and "Brandy Soup"
+merge under one-edit matching and says so in a comment: the limitation lives in the suite
+rather than in someone's head. `BooksDrinksCommandTest` runs the command twice and asserts the
+counts are identical, which is what catches an aggregate that was incremented rather than
+recomputed. And `SurveyTheBooksToolTest` pins that "the shelf has not been tallied" and
+"nothing matched that" stay two different sentences — collapse them and Eddie reports an
+absence from the books when what happened is that nobody counted them.

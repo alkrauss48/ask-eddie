@@ -289,6 +289,85 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Drinks
+    |--------------------------------------------------------------------------
+    |
+    | The drink layer turns printed headings into canonical drinks, so that
+    | "what comes up time and time again" is a query rather than a guess. It is
+    | derived entirely from text already in the database -- a pass over stored
+    | chunk text with the same HeadingPatterns the chunker used -- so it costs
+    | no inference and re-running it is seconds.
+    |
+    | "stop_headings" are folded keys for divisions of a book rather than
+    | drinks: a chapter called "PUNCHES." is a heading, and counting it would
+    | put the corpus's most common "drink" at the top of every tally. They live
+    | here rather than in code because finding another one is a corpus finding,
+    | which should be an edit and not a deploy.
+    |
+    | "fuzzy" governs whether two keys one edit apart are merged. It is off by
+    | default and should stay off until a --merges review says otherwise. The
+    | reason is worth stating plainly: a wrong merge fabricates a citation that
+    | passes every check this layer makes. If "Brandy Sour" and "Brandy Soup"
+    | fold together, the survey hands Eddie a row named Brandy Sour carrying a
+    | real book, a real page and a real byte offset, on which the word actually
+    | printed is "Soup" -- and a guest cannot tell. One edit on keys of six
+    | characters or more catches the OCR substitution ("BLUE LADV") and little
+    | else, but there is no setting that catches it and not the other, which is
+    | why the review comes first and the flag comes second.
+    |
+    | "aliases" and "splits" win over the clusterer in both directions, keyed by
+    | folded key. Both are empty on purpose, the same way strategy_overrides is:
+    | nothing belongs here until a review calls for it.
+    |
+    | Embeddings are deliberately absent. bge-m3 places "Blue Lady" nearer
+    | "Pink Lady" than its own misreading, so a vector is the wrong instrument
+    | for name identity. The legitimate use is offline: propose candidate pairs
+    | for a human to paste into "aliases". Suggestion in, never a write.
+    |
+    */
+
+    'drinks' => [
+        'stop_headings' => [
+            'punches', 'punch', 'cocktails', 'cocktail', 'fizzes', 'sours',
+            'cobblers', 'juleps', 'slings', 'toddies', 'smashes', 'daisies',
+            'flips', 'sangarees', 'shrubs', 'eggnoggs', 'noggs', 'crustas',
+            'fixes', 'rickeys', 'coolers', 'cups', 'wines', 'liqueurs',
+            'cordials', 'syrups', 'bitters', 'index', 'contents', 'appendix',
+            'preface', 'introduction', 'miscellaneous', 'miscellaneousdrinks',
+            'temperancedrinks', 'hotdrinks', 'summerdrinks', 'winterdrinks',
+        ],
+
+        'fuzzy' => [
+            'enabled' => (bool) env('BOOKS_DRINKS_FUZZY', false),
+            'min_key_length' => (int) env('BOOKS_DRINKS_FUZZY_MIN_LENGTH', 6),
+            'max_edits' => (int) env('BOOKS_DRINKS_FUZZY_MAX_EDITS', 1),
+        ],
+
+        /*
+        | Keyed by folded key. 'aliases' forces a merge the clusterer would not
+        | make; 'splits' forbids one it would. Empty on purpose.
+        */
+        'aliases' => [
+            //
+        ],
+        'splits' => [
+            //
+        ],
+
+        /*
+        | The survey tool's shape. "citations" is how many printed occurrences
+        | accompany each drink -- enough for Eddie to name a book and a page
+        | without handing him a page of them to read out.
+        */
+        'survey' => [
+            'limit' => (int) env('BOOKS_DRINKS_SURVEY_LIMIT', 10),
+            'max_limit' => (int) env('BOOKS_DRINKS_SURVEY_MAX', 25),
+            'citations' => (int) env('BOOKS_DRINKS_SURVEY_CITATIONS', 3),
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Catalog Overrides
     |--------------------------------------------------------------------------
     |
