@@ -35,6 +35,7 @@ class DrinkExtractor
         private readonly DrinkHeadingScanner $scanner,
         private readonly DrinkNameNormalizer $normalizer,
         private readonly DrinkClusterer $clusterer,
+        private readonly DrinkClassifier $classifier,
     ) {}
 
     /**
@@ -115,6 +116,7 @@ class DrinkExtractor
                         'extractor_version' => self::VERSION,
                         'normalizer_version' => DrinkNameNormalizer::VERSION,
                         'scanner_version' => DrinkHeadingScanner::VERSION,
+                        'classifier_version' => DrinkClassifier::VERSION,
                         // Borrowed from the chunking state rather than
                         // recomputed, so a books:chunk or books:renormalize run
                         // makes drinks stale without this class ever
@@ -145,7 +147,7 @@ class DrinkExtractor
             foreach ($drinks as $drink) {
                 $mentions = DrinkMention::query()
                     ->where('drink_id', $drink->id)
-                    ->get(['book_id', 'book_year', 'raw_heading']);
+                    ->get(['book_id', 'book_year', 'raw_heading', 'chunk_kind', 'heading_family']);
 
                 if ($mentions->isEmpty()) {
                     $drink->delete();
@@ -157,10 +159,21 @@ class DrinkExtractor
                 $spellings = $mentions->countBy('raw_heading')->sortDesc();
                 $display = $this->normalizer->display((string) $spellings->keys()->first());
 
+                // Classified in the same pass that derives the counts, because
+                // the verdict is a function of them: a rule reading book_count
+                // must not read one this pass is about to overwrite.
+                $verdict = $this->classifier->classify(
+                    $display,
+                    $drink->canonical_key,
+                    DrinkEvidence::fromMentions($mentions),
+                );
+
                 $drink->forceFill([
                     'canonical_name' => $display,
                     'slug' => $this->uniqueSlug($display, $drink),
                     'aliases' => $spellings->all(),
+                    'is_countable' => $verdict->isCountable,
+                    'signals' => $verdict->signals + ['reason' => $verdict->reason],
                     'mention_count' => $mentions->count(),
                     'book_count' => $mentions->pluck('book_id')->unique()->count(),
                     'first_year' => $years->first(),
@@ -168,9 +181,44 @@ class DrinkExtractor
                     'first_book_id' => $this->earliestBookId($mentions),
                     'extractor_version' => self::VERSION,
                     'normalizer_version' => DrinkNameNormalizer::VERSION,
+                    'classifier_version' => DrinkClassifier::VERSION,
                 ])->save();
             }
         });
+    }
+
+    /**
+     * Re-derive countability without re-reading a single chunk.
+     *
+     * Classification is a pure function of stored mentions, so moving
+     * DrinkClassifier::VERSION -- or editing the noise_headings list, which is
+     * the common case -- costs this pass rather than a re-extraction. The book
+     * stamps are rewritten too, or every book would keep reporting itself stale
+     * against a classifier that has already run over it.
+     *
+     * @return int the number of drinks now countable
+     */
+    public function reclassify(): int
+    {
+        $this->recomputeAggregates();
+
+        Book::query()->whereNotNull('metadata')->chunkById(100, function ($books): void {
+            foreach ($books as $book) {
+                $state = $book->metadata['drinks'] ?? null;
+
+                if (! is_array($state)) {
+                    continue;
+                }
+
+                $book->forceFill([
+                    'metadata' => array_merge($book->metadata, [
+                        'drinks' => array_merge($state, ['classifier_version' => DrinkClassifier::VERSION]),
+                    ]),
+                ])->save();
+            }
+        });
+
+        return Drink::query()->where('is_countable', true)->count();
     }
 
     /**
@@ -187,6 +235,13 @@ class DrinkExtractor
         if (($state['extractor_version'] ?? 0) !== self::VERSION
             || ($state['normalizer_version'] ?? 0) !== DrinkNameNormalizer::VERSION
             || ($state['scanner_version'] ?? 0) !== DrinkHeadingScanner::VERSION) {
+            return true;
+        }
+
+        // Classification alone is repaired by --reclassify rather than by
+        // re-extracting the book, so it is reported as staleness but costs a
+        // pass over stored mentions instead of a pass over chunk text.
+        if (($state['classifier_version'] ?? 0) !== DrinkClassifier::VERSION) {
             return true;
         }
 
@@ -385,26 +440,27 @@ class DrinkExtractor
         }
 
         $pairs = Drink::query()
-            ->select('extractor_version', 'normalizer_version')
+            ->select('extractor_version', 'normalizer_version', 'classifier_version')
             ->distinct()
             ->get();
 
         if ($pairs->count() > 1) {
             $failures[] = sprintf(
-                'the corpus holds %d different (extractor, normalizer) version pairs: %s',
+                'the corpus holds %d different (extractor, normalizer, classifier) version triples: %s',
                 $pairs->count(),
-                $pairs->map(fn (Drink $row): string => "v{$row->extractor_version}/v{$row->normalizer_version}")->implode(', '),
+                $pairs->map(fn (Drink $row): string => "v{$row->extractor_version}/v{$row->normalizer_version}/v{$row->classifier_version}")->implode(', '),
             );
         }
 
         $pair = $pairs->first();
 
         if ($pair !== null && ((int) $pair->extractor_version !== self::VERSION
-            || (int) $pair->normalizer_version !== DrinkNameNormalizer::VERSION)) {
+            || (int) $pair->normalizer_version !== DrinkNameNormalizer::VERSION
+            || (int) $pair->classifier_version !== DrinkClassifier::VERSION)) {
             $failures[] = sprintf(
-                'the corpus was extracted by v%d/v%d but the code is v%d/v%d',
-                $pair->extractor_version, $pair->normalizer_version,
-                self::VERSION, DrinkNameNormalizer::VERSION,
+                'the corpus was extracted by v%d/v%d/v%d but the code is v%d/v%d/v%d',
+                $pair->extractor_version, $pair->normalizer_version, $pair->classifier_version,
+                self::VERSION, DrinkNameNormalizer::VERSION, DrinkClassifier::VERSION,
             );
         }
 
@@ -419,7 +475,7 @@ class DrinkExtractor
      * measurement that put them on the packing path, so a corpus-wide claim
      * drawn from this layer is really a claim about the books it could count.
      *
-     * @return array{counted: int, total: int, drinks: int, silent: list<string>, carrying: int}
+     * @return array{counted: int, total: int, drinks: int, uncountable: int, silent: list<string>, carrying: int}
      */
     public function coverage(): array
     {
@@ -442,7 +498,11 @@ class DrinkExtractor
         return [
             'counted' => $counted,
             'total' => $total,
-            'drinks' => Drink::query()->count(),
+            // The countable rows only, because this is the number that reaches
+            // a sentence Eddie says out loud. The rest are reported beside it
+            // rather than folded in, so a growing tail stays visible.
+            'drinks' => Drink::query()->where('is_countable', true)->count(),
+            'uncountable' => Drink::query()->where('is_countable', false)->count(),
             'silent' => $silent,
             // Every book in this corpus yields at least one name, so a count of
             // books says nothing about where the tally came from. This does.

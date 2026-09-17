@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Retrieval\DrinkTally;
 use Database\Factories\DrinkFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -31,12 +32,15 @@ class Drink extends Model
     {
         return [
             'aliases' => 'array',
+            'signals' => 'array',
+            'is_countable' => 'boolean',
             'mention_count' => 'integer',
             'book_count' => 'integer',
             'first_year' => 'integer',
             'last_year' => 'integer',
             'extractor_version' => 'integer',
             'normalizer_version' => 'integer',
+            'classifier_version' => 'integer',
         ];
     }
 
@@ -64,14 +68,7 @@ class Drink extends Model
      */
     public function yearRange(): string
     {
-        if ($this->first_year === null && $this->last_year === null) {
-            return '';
-        }
-
-        $from = $this->first_year ?? $this->last_year;
-        $to = $this->last_year ?? $this->first_year;
-
-        return $from === $to ? (string) $from : "{$from}–{$to}";
+        return DrinkTally::fromDrink($this)->yearRange();
     }
 
     /**

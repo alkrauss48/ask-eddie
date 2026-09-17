@@ -64,3 +64,18 @@ Reranking through the package needed one small provider: laravel/ai ships it for
 Every survey carries `DrinkCoverage::sentence()` in its preamble. The narrative books print no drink headings, so a tally is a claim about the books it could count — without that sentence Eddie states a corpus-wide claim he cannot support, and "most of my books" and "all my books" become the same sentence to him.
 
 SurveyTheBooks fails closed like AiReranker: catch Throwable, report(), return a sentence. Three distinct returns — not-yet-tallied, nothing-matched, tally-unavailable — because a bare `[]` reads to the model as "no such drinks exist", which is a false claim about the books.
+
+## A year window is counted inside, not filtered by
+DrinkQuery::isWindowed() splits DrinkSurveyor into two paths. Corpus-wide reads the materialized columns on `drinks`. Windowed recounts book_count/mention_count/first_year/last_year over drink_mentions inside the bounds and orders on THOSE, carried by DrinkTally.
+
+The defect this replaced: from_year/to_year narrowed which drinks came back via whereHas and then ranked them on the corpus-wide book_count, so a survey of 1860-1869 returned the same eight drinks in the same order as a survey of everything. The question looked answered and was not.
+
+Two things must travel with the window or the answer is subtly false:
+- Citations. A citation from outside the window is a true sentence about the wrong books -- asked about the sixties, Eddie must not cite an 1899 page. DrinkSurveyor::mentionsFor() applies the bounds.
+- The denominator. DrinkCoverage's windowed sentence names how many books the window holds, because "3 books print this" reads as a claim about the shelf when the 1860s only HAS 6 books and Thomas 1862 supplies 82% of the decade.
+
+also_printed_as stays corpus-wide (drinks.aliases, the extractor's receipt) unless windowed, where it is recounted from the window's own mentions -- aliases cannot say which years a spelling came from. DrinkSummaryTest pins the corpus-wide behaviour; do not "simplify" it to always derive from mentions.
+
+DrinkCoverage::isEmpty() is rowsTallied === 0, not drinkCount === 0. A shelf whose every row the classifier set aside has still been tallied, and collapsing that into "not yet counted" undoes the three-way distinction SurveyTheBooks::handle() exists to keep.
+
+first_year is the earliest book ON THIS SHELF that prints a drink, never where it was invented; the shelf is thin before 1880. An earliest/latest survey carries that caveat in the preamble and EddieAgent's instructions repeat it.

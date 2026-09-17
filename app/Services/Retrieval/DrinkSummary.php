@@ -34,16 +34,22 @@ readonly class DrinkSummary
     ) {}
 
     /**
+     * The counts come from the tally rather than from the model, because a
+     * question with year bounds is answered with the numbers inside them --
+     * "three of the six books I have from the sixties", not the 27 the whole
+     * shelf prints. With no bounds the tally is the model's own columns.
+     *
+     * @param  list<string>  $otherSpellings
      * @param  list<string>  $citations
      */
-    public static function fromDrink(Drink $drink, array $citations): self
+    public static function fromDrink(Drink $drink, DrinkTally $tally, array $otherSpellings, array $citations): self
     {
         return new self(
             $drink->canonical_name,
-            $drink->book_count,
-            $drink->mention_count,
-            $drink->yearRange(),
-            $drink->otherSpellings(),
+            $tally->bookCount,
+            $tally->mentionCount,
+            $tally->yearRange(),
+            $otherSpellings,
             $citations,
         );
     }

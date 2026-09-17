@@ -47,3 +47,14 @@ The reason: if "Brandy Sour" and "Brandy Soup" fold together, the survey hands E
 Mitigations that must stay: fuzzy off by default; `drinks.aliases` records every raw spelling as the receipt; `books.drinks.aliases`/`splits` win over the algorithm in both directions; citations are always rendered from a specific mention's own chunk, never from the canonical name.
 
 Never cluster drink names by embedding. bge-m3 places "Blue Lady" nearer "Pink Lady", and "Gin Fizz" nearer "Gin Rickey", than either sits to its own OCR misreading; vectors also cannot be re-derived after a model change, which breaks the version-constant contract. Offline suggestion of candidate pairs for a human to paste into config is the only legitimate use.
+
+## Drink countability is classified, never deleted
+DrinkClassifier sets drinks.is_countable + drinks.signals in DrinkExtractor::recomputeAggregates(), mirroring ChunkClassifier/is_indexable. Nothing is deleted: a mention stays evidence that a book printed a string at an offset whatever the verdict.
+
+min_books (2) is the rule that does the work -- 7,011 of the first run's 9,437 rows were single-book, which is where the OCR wreckage lives (Thiet Dtn, Caucliois). It cut the table to 2,382 countable and left the head of the tally byte-identical.
+
+Deliberately NOT a rule: a minimum share of mentions in recipe chunks. It reads like the obvious discriminator and the corpus says otherwise -- below 25% sit Gothic Punch, Bilberry Cordial, Hock Cobbler and Soldiers Camping Punch, real drinks this shelf only prints inside prose. Measured: the 25-50% band is almost entirely real drinks. The share is recorded in signals and decides nothing.
+
+The surviving function words (This/There/Here, 5-6 books each) are not structurally separable from Bishop (27 books) -- that is a list, not a heuristic, so it lives in books.drinks.classification.noise_headings. Several are drop-cap artefacts where a decorative initial scanned as its own word: Ne-Half = one-half, Uice = juice, Hree = three, T He = the. Grow the list from `books:drinks --noise`, which proposes and writes nothing.
+
+Classification is a pure function of stored mentions, so DrinkClassifier::VERSION moves independently and `books:drinks --reclassify` repairs it without re-reading a chunk. It must also restamp each book's metadata classifier_version or every book keeps reporting itself stale.

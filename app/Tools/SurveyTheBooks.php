@@ -43,7 +43,12 @@ class SurveyTheBooks implements Tool
     public function handle(Request $request): Stringable|string
     {
         try {
-            $coverage = $this->surveyor->coverage();
+            $query = $this->queryFrom($request);
+
+            // Coverage is computed for this question, not for the shelf in
+            // general: a survey bounded to a decade is a claim about the books
+            // that decade holds, and the preamble has to say so.
+            $coverage = $this->surveyor->coverage($query);
 
             // A tally that has never been run and a filter that matched nothing
             // are different facts, and they must not collapse into one sentence
@@ -54,7 +59,7 @@ class SurveyTheBooks implements Tool
                     .'the books just now, and use the search tool instead. Do not guess a number.';
             }
 
-            $results = $this->surveyor->survey($this->queryFrom($request));
+            $results = $this->surveyor->survey($query);
 
             if ($results->isEmpty()) {
                 return 'No drink on the shelf matches that. Say so rather than inventing a tally.';

@@ -4,6 +4,9 @@ namespace App\Console\Commands\Books;
 
 use App\Models\Book;
 use App\Models\Drink;
+use App\Models\DrinkMention;
+use App\Services\Books\DrinkClassifier;
+use App\Services\Books\DrinkEvidence;
 use App\Services\Books\DrinkExtractionReport;
 use App\Services\Books\DrinkExtractor;
 use App\Services\Books\DrinkNameNormalizer;
@@ -29,6 +32,9 @@ class DrinksCommand extends Command
         {--dry-run : Report what would be written without touching the database}
         {--verify : Check the drink layer against its invariants and exit}
         {--merges : List every merge the clusterer made, for review}
+        {--reclassify : Re-derive countability from stored mentions, without re-extracting}
+        {--noise : Propose names that look like sentence openers, for review}
+        {--suffixes : List "X" / "X Cocktail" pairs that may be the same drink, for review}
         {--top= : Show the drinks the most books print, and the shape of the tail}
         {--show= : Inspect one drink, its spellings and where it was printed}';
 
@@ -50,6 +56,14 @@ class DrinksCommand extends Command
             return $this->show((string) $this->option('show'));
         }
 
+        if ($this->option('noise')) {
+            return $this->noise();
+        }
+
+        if ($this->option('suffixes')) {
+            return $this->suffixes();
+        }
+
         // A second run would delete the mentions the first is still writing.
         $lock = Cache::lock('books:drinks', 30 * 60);
 
@@ -60,7 +74,11 @@ class DrinksCommand extends Command
         }
 
         try {
-            return $this->extract($extractor);
+            // Reclassification writes to drinks, so it takes the same lock as an
+            // extraction, but it reads no chunk text and rewrites no mentions.
+            return $this->option('reclassify')
+                ? $this->reclassify($extractor)
+                : $this->extract($extractor);
         } finally {
             $lock->release();
         }
@@ -200,7 +218,7 @@ class DrinksCommand extends Command
         $coverage = $extractor->coverage();
 
         $this->newLine();
-        $this->line("  {$coverage['drinks']} drink(s) across {$coverage['counted']} of {$coverage['total']} book(s); "
+        $this->line("  {$coverage['drinks']} countable drink(s) across {$coverage['counted']} of {$coverage['total']} book(s); "
             ."nine parts in ten of the count come from {$coverage['carrying']} of them.");
         $shape = $this->distribution();
 
@@ -211,7 +229,153 @@ class DrinksCommand extends Command
             number_format($shape['several']),
             number_format($shape['many']),
         ));
+        $this->countability($coverage);
         $this->line('  Run `books:drinks --top` to read the head of the tally, `--verify` to check its invariants.');
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * Re-derive countability alone.
+     *
+     * Editing books.drinks.classification -- which in practice means adding a
+     * word to noise_headings after reading `--noise` -- changes no offset and no
+     * mention, so it must not cost a re-extraction of 102 books.
+     */
+    private function reclassify(DrinkExtractor $extractor): int
+    {
+        $before = Drink::query()->where('is_countable', true)->count();
+        $countable = $extractor->reclassify();
+        $coverage = $extractor->coverage();
+
+        $this->newLine();
+        $this->line(sprintf(
+            '  %s drink(s) countable, %s set aside (was %s countable).',
+            number_format($countable),
+            number_format($coverage['uncountable']),
+            number_format($before),
+        ));
+        $this->countability($coverage);
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * @param  array{drinks: int, uncountable: int, counted: int, total: int, carrying: int, silent: list<string>}  $coverage
+     */
+    private function countability(array $coverage): void
+    {
+        if ($coverage['uncountable'] === 0) {
+            return;
+        }
+
+        $this->line(sprintf(
+            '  %s row(s) are set aside as not countable; they keep their mentions and are excluded from every tally.',
+            number_format($coverage['uncountable']),
+        ));
+        $this->line('  Run `books:drinks --noise` and `--suffixes` for the two reviews that can shrink the tail.');
+    }
+
+    /**
+     * Names that read as a paragraph's opening capital rather than a drink.
+     *
+     * A proposal, never a write -- the same doctrine config/books.php states for
+     * fuzzy name merges, and for the same reason: the shape that catches "This"
+     * and "There" also catches "Kummel", "Cooler" and "Tequila", which are
+     * drinks. A human decides, and what they decide goes in
+     * books.drinks.classification.noise_headings.
+     */
+    private function noise(): int
+    {
+        $classifier = app(DrinkClassifier::class);
+        $candidates = [];
+
+        Drink::query()->where('is_countable', true)->chunkById(200, function ($drinks) use ($classifier, &$candidates): void {
+            foreach ($drinks as $drink) {
+                $mentions = DrinkMention::query()
+                    ->where('drink_id', $drink->id)
+                    ->get(['book_id', 'chunk_kind', 'heading_family']);
+
+                $evidence = DrinkEvidence::fromMentions($mentions);
+
+                if ($classifier->looksLikeSentenceOpener($drink->canonical_name, $evidence)) {
+                    $candidates[$drink->canonical_key] = sprintf(
+                        "    '%s', // %s -- %d book(s), every mention a paragraph opening",
+                        $drink->canonical_key,
+                        $drink->canonical_name,
+                        $evidence->bookCount,
+                    );
+                }
+            }
+        });
+
+        if ($candidates === []) {
+            $this->info('  Nothing reads as a sentence opener.');
+
+            return self::SUCCESS;
+        }
+
+        $this->line(sprintf('  %d candidate(s). Paste the ones that are not drinks into', count($candidates)));
+        $this->line('  config/books.php under books.drinks.classification.noise_headings, then run');
+        $this->line('  `books:drinks --reclassify`. Nothing here has been written.');
+        $this->newLine();
+
+        foreach ($candidates as $line) {
+            $this->line($line);
+        }
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * "X" and "X Cocktail", which are sometimes one drink and sometimes two.
+     *
+     * Deliberately not a rule. "Manhattan"/"Manhattan Cocktail" and
+     * "Martini"/"Martini Cocktail" are the same drink; "Champagne"/"Champagne
+     * Cocktail", "Gin"/"Gin Cocktail" and "Brandy"/"Brandy Cocktail" are not,
+     * because the bare name is the ingredient. Nothing in the strings separates
+     * those two cases, and a wrong merge here produces the failure
+     * config/books.php already refuses to risk: a real book, a real page, a real
+     * offset, and the wrong word printed on it.
+     */
+    private function suffixes(): int
+    {
+        $pairs = Drink::query()
+            ->from('drinks as bare')
+            ->join('drinks as suffixed', function ($join): void {
+                $join->whereRaw("suffixed.canonical_key = bare.canonical_key || 'cocktail'");
+            })
+            ->orderByDesc('suffixed.book_count')
+            ->get([
+                'bare.canonical_name as bare_name',
+                'bare.canonical_key as bare_key',
+                'bare.book_count as bare_books',
+                'suffixed.canonical_name as suffixed_name',
+                'suffixed.canonical_key as suffixed_key',
+                'suffixed.book_count as suffixed_books',
+            ]);
+
+        if ($pairs->isEmpty()) {
+            $this->info('  No "X" / "X Cocktail" pairs.');
+
+            return self::SUCCESS;
+        }
+
+        $this->line(sprintf('  %d pair(s). These are NOT safe to merge as a rule: where the bare', $pairs->count()));
+        $this->line('  name is an ingredient ("Gin", "Brandy", "Champagne") the two are different');
+        $this->line('  drinks. Paste only the genuine duplicates into books.drinks.aliases.');
+        $this->newLine();
+
+        $this->table(
+            ['bare', 'books', 'suffixed', 'books', 'alias key'],
+            $pairs->map(fn ($pair): array => [
+                $pair->bare_name,
+                $pair->bare_books,
+                $pair->suffixed_name,
+                $pair->suffixed_books,
+                $pair->bare_key,
+            ])->all(),
+        );
 
         return self::SUCCESS;
     }
@@ -221,8 +385,9 @@ class DrinksCommand extends Command
         $failures = $extractor->verify();
         $coverage = $extractor->coverage();
 
-        $this->line("  {$coverage['drinks']} drink(s) across {$coverage['counted']} of {$coverage['total']} book(s); "
+        $this->line("  {$coverage['drinks']} countable drink(s) across {$coverage['counted']} of {$coverage['total']} book(s); "
             ."nine parts in ten of the count come from {$coverage['carrying']} of them.");
+        $this->countability($coverage);
 
         if ($coverage['silent'] !== []) {
             $this->line('  no mentions: '.implode(', ', $coverage['silent']));
@@ -307,6 +472,7 @@ class DrinksCommand extends Command
     private function distribution(): array
     {
         $row = Drink::query()
+            ->where('is_countable', true)
             ->selectRaw('count(*) filter (where book_count <= 1) as one')
             ->selectRaw('count(*) filter (where book_count between 2 and 4) as few')
             ->selectRaw('count(*) filter (where book_count between 5 and 9) as several')

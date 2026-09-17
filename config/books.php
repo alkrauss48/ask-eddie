@@ -355,6 +355,57 @@ return [
         ],
 
         /*
+        |----------------------------------------------------------------------
+        | Countability
+        |----------------------------------------------------------------------
+        |
+        | Which rows the tally is allowed to count. Nothing here deletes a drink
+        | or a mention: DrinkClassifier sets drinks.is_countable and records its
+        | measurements in drinks.signals, exactly as ChunkClassifier sets
+        | book_chunks.is_indexable.
+        |
+        | "min_books" is the rule that does the work -- 7,011 of the first real
+        | run's 9,437 rows were printed in exactly one book, and that tail is
+        | where the OCR wreckage lives. It is deliberately not a quality
+        | threshold: a drink two books printed independently is a drink, however
+        | odd it looks, which is why "Bishop" and "Shandy Gaff" survive it.
+        |
+        | Deliberately absent: a minimum share of mentions in recipe chunks. It
+        | reads like the obvious rule and the corpus says otherwise -- below a
+        | quarter sit "Gothic Punch", "Bilberry Cordial", "Hock Cobbler" and
+        | "Soldiers Camping Punch", real drinks this shelf happens to print only
+        | inside prose. The share is recorded in signals for a later pass that
+        | has better evidence; it decides nothing today.
+        |
+        | "noise_headings" is a list rather than a heuristic because the words on
+        | it are not structurally distinguishable from drinks -- "This" appears
+        | in 6 books and "Bishop" in 27, and nothing but English separates them.
+        | Several are drop-cap artefacts, where a decorative first letter was
+        | scanned as its own word: "Ne-Half" is one-half, "Uice" is juice, "Hree"
+        | is three, "T He" is the. Grow it from `books:drinks --noise`, which
+        | proposes candidates and writes nothing.
+        */
+        'classification' => [
+            'min_books' => (int) env('BOOKS_DRINKS_MIN_BOOKS', 2),
+            'max_words' => (int) env('BOOKS_DRINKS_MAX_WORDS', 6),
+            'min_letter_ratio' => (float) env('BOOKS_DRINKS_MIN_LETTER_RATIO', 0.6),
+
+            'noise_headings' => [
+                // Sentence openers caught by the caps_prefix family.
+                'this', 'there', 'here', 'heres', 'they', 'them', 'these', 'those',
+                'when', 'then', 'before', 'after', 'although', 'having', 'never',
+                'very', 'little', 'clean', 'take', 'mix', 'add', 'three', 'drink',
+
+                // Drop-cap artefacts: the decorative initial read as its own word.
+                'the', 'nehalf', 'nequarter', 'wothirds', 'hree', 'uice',
+                'ablespoonful', 'ters',
+
+                // Book furniture.
+                'page', 'chapter', 'note', 'plate', 'figure',
+            ],
+        ],
+
+        /*
         | The survey tool's shape. "citations" is how many printed occurrences
         | accompany each drink -- enough for Eddie to name a book and a page
         | without handing him a page of them to read out.
