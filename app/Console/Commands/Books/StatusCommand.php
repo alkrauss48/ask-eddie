@@ -8,6 +8,7 @@ use App\Models\Book;
 use App\Models\BookPage;
 use App\Services\Books\BookChunker;
 use App\Services\Books\ChunkEmbedder;
+use App\Services\Books\DrinkExtractor;
 use Illuminate\Console\Command;
 
 class StatusCommand extends Command
@@ -16,7 +17,7 @@ class StatusCommand extends Command
 
     protected $description = 'Show extraction progress for every imported book';
 
-    public function handle(BookChunker $chunker, ChunkEmbedder $embedder): int
+    public function handle(BookChunker $chunker, ChunkEmbedder $embedder, DrinkExtractor $drinks): int
     {
         $slugs = array_filter((array) $this->option('book'));
 
@@ -31,11 +32,11 @@ class StatusCommand extends Command
             return self::FAILURE;
         }
 
-        $rows = $books->map(fn (Book $book): array => $this->row($book, $chunker, $embedder))->all();
+        $rows = $books->map(fn (Book $book): array => $this->row($book, $chunker, $embedder, $drinks))->all();
 
         $this->newLine();
         $this->table(
-            ['Book', 'Year', 'Status', 'Pages', 'Done', 'Blank', 'Failed', 'Source split', 'Mean quality', 'Chunks', 'Chunked', 'Embedded'],
+            ['Book', 'Year', 'Status', 'Pages', 'Done', 'Blank', 'Failed', 'Source split', 'Mean quality', 'Chunks', 'Chunked', 'Embedded', 'Drinks'],
             $rows
         );
 
@@ -58,7 +59,7 @@ class StatusCommand extends Command
     /**
      * @return array<int, string>
      */
-    private function row(Book $book, BookChunker $chunker, ChunkEmbedder $embedder): array
+    private function row(Book $book, BookChunker $chunker, ChunkEmbedder $embedder, DrinkExtractor $drinks): array
     {
         // reorder() drops the relation's page ordering, which Postgres will not
         // accept alongside a GROUP BY.
@@ -100,6 +101,7 @@ class StatusCommand extends Command
             (string) $book->chunks()->count(),
             $this->chunkState($book, $chunker),
             $this->embedState($book),
+            $this->drinkState($book, $drinks),
         ];
     }
 
@@ -127,6 +129,27 @@ class StatusCommand extends Command
         $label = "{$embedded}/{$indexable}";
 
         return $embedded === $indexable ? $label : "<fg=yellow>{$label}</>";
+    }
+
+    /**
+     * How many drink names this book contributed to the tally.
+     *
+     * A dash here is not a failure. The narrative books print few drink
+     * headings, which is the same measurement that put them on the packing
+     * path, so a column of dashes down the prose half of the shelf is the
+     * corpus telling the truth about itself.
+     */
+    private function drinkState(Book $book, DrinkExtractor $drinks): string
+    {
+        $state = $book->metadata['drinks'] ?? null;
+
+        if (! is_array($state)) {
+            return '<fg=gray>—</>';
+        }
+
+        $count = (int) ($state['drink_count'] ?? 0);
+
+        return $drinks->isStale($book) ? "<fg=yellow>{$count} stale</>" : (string) $count;
     }
 
     /**

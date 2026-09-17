@@ -3,6 +3,7 @@ paths:
   - 'app/Services/Books/**'
   - app/Services/Books/PageTextNormalizer.php
   - app/Services/Books/PageExtractor.php
+  - 'app/Services/Books/Drink*.php'
 ---
 
 # Books
@@ -37,3 +38,12 @@ config('books.chunking.max_chars') is a ceiling enforced in ChunkPacker::assertW
 Nothing is deleted at chunk time. ChunkClassifier sets kind + is_indexable and records its measurements in signals; retrieval filters on the column. This is the debt .ai/rules/books.md parks in this phase. Recognise a recipe positively (heading + measure or instruction word) and test that before any density heuristic, or a page of 20-character ingredient lines reads as a list — the Python's "80% short lines" rule would delete every page of Cafe Royal.
 
 Bump BookChunker::VERSION when assembly, boundary or sizing rules change; ChunkClassifier::VERSION when only classification does; SectionDetector::VERSION for structure. isStale() also compares the assembled stream's checksum, which is what catches a books:renormalize run that moved page text without touching any version.
+
+## A wrong drink merge fabricates a citation that passes --verify
+Exact `canonical_key` match is the only merge DrinkClusterer runs by default. Fuzzy matching (levenshtein, one edit, keys >= 6 chars) is behind `BOOKS_DRINKS_FUZZY=false` and must stay there until `books:drinks --merges` has been reviewed against the real corpus.
+
+The reason: if "Brandy Sour" and "Brandy Soup" fold together, the survey hands Eddie a row named Brandy Sour carrying a real book, a real page and a real byte offset — on which the word printed is "Soup". Every invariant passes; only the name is wrong, and a guest cannot tell. One edit catches the OCR substitution ("BLUE LADV") and it also catches this. There is no threshold that separates them.
+
+Mitigations that must stay: fuzzy off by default; `drinks.aliases` records every raw spelling as the receipt; `books.drinks.aliases`/`splits` win over the algorithm in both directions; citations are always rendered from a specific mention's own chunk, never from the canonical name.
+
+Never cluster drink names by embedding. bge-m3 places "Blue Lady" nearer "Pink Lady", and "Gin Fizz" nearer "Gin Rickey", than either sits to its own OCR misreading; vectors also cannot be re-derived after a model change, which breaks the version-constant contract. Offline suggestion of candidate pairs for a human to paste into config is the only legitimate use.

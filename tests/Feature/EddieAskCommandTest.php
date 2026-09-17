@@ -5,7 +5,7 @@ use App\Models\Book;
 use App\Models\BookChunk;
 use App\Services\Retrieval\NullReranker;
 use App\Services\Retrieval\Reranker;
-use App\Tools\SearchTheBooks;
+use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Embeddings;
 
 beforeEach(function (): void {
@@ -119,11 +119,15 @@ it('reports a retrieval failure without a stack trace', function (): void {
         ->assertFailed();
 });
 
-it('gives eddie the search tool and nothing else', function (): void {
+/**
+ * The roster itself is asserted in EddieAgentTest; what matters here is that
+ * the command hands Eddie tools rather than letting him answer from memory.
+ */
+it('gives eddie the books rather than his own recollection', function (): void {
     $tools = iterator_to_array(app(EddieAgent::class)->tools());
 
-    expect($tools)->toHaveCount(1)
-        ->and($tools[0])->toBeInstanceOf(SearchTheBooks::class);
+    expect($tools)->not->toBeEmpty()
+        ->and($tools)->toContainOnlyInstancesOf(Tool::class);
 });
 
 /**

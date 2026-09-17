@@ -111,3 +111,34 @@ it('ignores the folio zone when scanning a page', function (): void {
 
     expect($headings)->toHaveCount(0);
 });
+
+/**
+ * Public because the drink layer needs the same judgement and must not arrive
+ * at it separately: matchCapsLine() flags every caps line sectionLike, so in a
+ * book that shouts its drink names that flag cannot tell a division from a
+ * drink. What follows the line is what can.
+ */
+it('says whether a line reads as the first measure of a recipe', function (): void {
+    expect($this->patterns->opensARecipe('1 wine-glass of gin.'))->toBeTrue()
+        ->and($this->patterns->opensARecipe('½ Booth\'s Gin.'))->toBeTrue()
+        ->and($this->patterns->opensARecipe('(Use a large bar glass.)'))->toBeTrue()
+        ->and($this->patterns->opensARecipe('These are made as follows.'))->toBeFalse();
+});
+
+/**
+ * trim() with a character list matches it byte by byte, so an em dash in the
+ * list can shear one byte off an unrelated multibyte character and hand back a
+ * broken string -- the bug that produced a heading ending in half of the "ç" in
+ * "Curaçao" and had Postgres reject it mid-insert. The title-case branch was
+ * still doing it after trimEdges() was written to stop it.
+ */
+it('returns valid utf-8 from every heading family', function (string $line, ?string $next): void {
+    $match = $this->patterns->match($line, $next);
+
+    expect($match)->not->toBeNull()
+        ->and(mb_check_encoding($match->text, 'UTF-8'))->toBeTrue();
+})->with([
+    ['Crème de Menthe Frappé', '1 wine-glass of crème de menthe.'],
+    ['CURAÇAO PUNCH.', '1 wine-glass of curaçao.'],
+    ['128. Curaçao Punch.', '1 wine-glass of curaçao.'],
+]);
