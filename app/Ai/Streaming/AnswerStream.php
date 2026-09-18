@@ -8,7 +8,7 @@ use Laravel\Ai\Streaming\Events\TextDelta;
 use Laravel\Ai\Streaming\Events\ToolCall;
 
 /**
- * The one place that decides which of Eddie's stream events a guest may see.
+ * The one place that decides which of a bartender's stream events a guest may see.
  *
  * The package hands back every event the provider emitted, ToolResult among
  * them -- and a ToolResult carries the whole eight-key passage payload that
@@ -16,24 +16,26 @@ use Laravel\Ai\Streaming\Events\ToolCall;
  * terminal, or shipping it down an SSE connection to a browser, is the same
  * leak in two costumes, so the decision lives here rather than at each consumer.
  *
- * Which is also why this class exists rather than a foreach in AskCommand: the
+ * Which is also why this class exists rather than a foreach in BarAskCommand: the
  * JSON API will consume the same stream with a different sink, and this is the
  * part it must not re-decide.
  */
 final class AnswerStream
 {
     /**
-     * In-character names for the tools, keyed by the name the model sees.
-     *
-     * Laravel\Ai\Tools\ToolNameResolver derives that name from class_basename,
-     * so these keys are the tool class names and nothing needs to declare them.
+     * @param  array<string, string>  $labels  in-character tool names, keyed by
+     *                                         the name the model sees, which
+     *                                         ToolNameResolver derives from
+     *                                         class_basename. Defaults to
+     *                                         config('bar.labels'); passed in so
+     *                                         the JSON API can label the same
+     *                                         stream differently without this
+     *                                         class knowing either consumer.
      */
-    private const LABELS = [
-        'SearchTheBooks' => 'reaching for the books',
-        'SurveyTheBooks' => "counting what's on the shelf",
-    ];
-
-    public function __construct(private readonly StreamableAgentResponse $response) {}
+    public function __construct(
+        private readonly StreamableAgentResponse $response,
+        private readonly array $labels = [],
+    ) {}
 
     /**
      * Walk the stream, handing each consumer the part it is allowed to know about.
@@ -96,8 +98,15 @@ final class AnswerStream
         }
     }
 
+    /**
+     * An unlabelled tool shows its own class name rather than nothing.
+     *
+     * Ugly on purpose: a tool added without a label should be visible in the
+     * terminal the first time it runs, where a silent fallback would hide the
+     * call entirely and make a pause look like a hang.
+     */
     private function label(string $tool): string
     {
-        return self::LABELS[$tool] ?? $tool;
+        return $this->labels[$tool] ?? $tool;
     }
 }

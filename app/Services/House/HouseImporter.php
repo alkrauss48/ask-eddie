@@ -603,9 +603,7 @@ class HouseImporter
      */
     private function absoluteUrl(string $path): string
     {
-        return str_starts_with($path, 'http')
-            ? $path
-            : (string) config('house.site_url').'/'.ltrim($path, '/');
+        return HouseUrl::absolute($path);
     }
 
     private function save(HouseImportReport $report, string $entity, Model $model): void

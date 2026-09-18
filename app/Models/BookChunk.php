@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\ChunkKind;
+use App\Services\Retrieval\RetrievablePassage;
 use Database\Factories\BookChunkFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\AsVector;
@@ -26,7 +27,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * product decision rather than presentation tidying, and why they are covered
  * by their own test.
  */
-class BookChunk extends Model
+class BookChunk extends Model implements RetrievablePassage
 {
     /** @use HasFactory<BookChunkFactory> */
     use HasFactory;

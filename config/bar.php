@@ -1,0 +1,117 @@
+<?php
+
+use App\Agents\EddieAgent;
+use App\Agents\SashaAgent;
+use App\Services\Retrieval\ChunkRetriever;
+use App\Services\Retrieval\HouseRetriever;
+
+return [
+
+    /*
+    |--------------------------------------------------------------------------
+    | Who Is Behind The Bar
+    |--------------------------------------------------------------------------
+    |
+    | Two bartenders, two corpora, one command. `bar:ask --bartender=` selects a
+    | row here, and the row decides both the agent and the retriever it is
+    | grounded in -- which is what makes `--sources` and `--retrieval-only` work
+    | for either of them rather than only for Eddie.
+    |
+    | Provider and model are configuration rather than attributes on the agent
+    | classes, and they are passed at call time. laravel/ai reads #[Provider] and
+    | #[Model] attributes off the class, so pinning a bartender to a model that
+    | way would mean editing a class to change one; this way SASHA_PROVIDER and
+    | SASHA_TEXT_MODEL are environment variables, and the two can run on
+    | different providers without either class knowing. Null means "whatever
+    | config('ai.default') says", which is the behaviour Eddie had before this
+    | file existed.
+    |
+    */
+
+    'bartenders' => [
+
+        'eddie' => [
+            'name' => 'Eddie',
+            'agent' => EddieAgent::class,
+            'retriever' => ChunkRetriever::class,
+            'corpus' => 'books',
+            'provider' => env('EDDIE_PROVIDER'),
+            'model' => env('EDDIE_TEXT_MODEL'),
+            'blurb' => 'a 1930s uptown bartender, grounded in a shelf of public-domain manuals',
+
+            /*
+            | The hint printed when retrieval fails. Both corpora embed through
+            | the same TEI container, so the cause is the same one in both cases
+            | -- but the command that checks it is not.
+            */
+            'doctor' => 'books:doctor',
+        ],
+
+        'sasha' => [
+            'name' => 'Sasha',
+            'agent' => SashaAgent::class,
+            'retriever' => HouseRetriever::class,
+            'corpus' => 'house',
+            'provider' => env('SASHA_PROVIDER'),
+            'model' => env('SASHA_TEXT_MODEL'),
+            'blurb' => "the house bartender, grounded in the Krauss Haus's own menus",
+            'doctor' => 'house:status',
+        ],
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Default Bartender
+    |--------------------------------------------------------------------------
+    |
+    | Eddie, because he was here first and `eddie:ask "gin fizz"` should keep
+    | working as `bar:ask "gin fizz"` with nothing else typed.
+    |
+    */
+
+    'default' => env('BAR_DEFAULT_BARTENDER', 'eddie'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | In-Character Tool Labels
+    |--------------------------------------------------------------------------
+    |
+    | What a guest sees while a tool runs. Laravel\Ai\Tools\ToolNameResolver
+    | derives the name the model sees from class_basename, so these keys are the
+    | tool class names and nothing needs to declare them.
+    |
+    | These were a private const on AnswerStream. They moved here when the
+    | second bartender arrived: the stream is the one place that decides what a
+    | guest may see of a tool call, and that decision should not also be the
+    | place that knows how each bartender talks about their own tools. An
+    | unlisted tool falls back to its class name, which is ugly and visible --
+    | deliberately, because a silent fallback to nothing would hide a tool call
+    | entirely.
+    |
+    */
+
+    'labels' => [
+        'SearchTheBooks' => 'reaching for the books',
+        'SurveyTheBooks' => "counting what's on the shelf",
+        'SearchTheHouse' => 'checking the house pages',
+        'BrowseTheMenus' => 'running an eye down the menus',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Menu Browsing
+    |--------------------------------------------------------------------------
+    |
+    | How many drinks BrowseTheMenus hands back when the model does not say.
+    | Eight is a conversation's worth: enough that a guest who rules out two
+    | things still has something to choose between, few enough that Sasha
+    | answers rather than reads out a list.
+    |
+    */
+
+    'menus' => [
+        'limit' => (int) env('BAR_MENU_LIMIT', 8),
+    ],
+
+];

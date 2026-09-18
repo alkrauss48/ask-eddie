@@ -15,10 +15,21 @@ use Throwable;
  * their vectors land near each other, a cross-encoder reads both at once. That
  * is worth a round trip when the fused order is close but not right -- which
  * over a corpus of near-identical gin recipes it often is.
+ *
+ * The corpus name is a constructor argument rather than a hard-coded "books"
+ * because this class reads three knobs -- candidates, provider and model -- and
+ * the Reranker binding is resolved out of the container by whichever retriever
+ * asked for it. Without it, a HouseRetriever resolving the global binding would
+ * silently rerank house passages with the books corpus's settings, including
+ * its candidate ceiling and its enabled flag. AppServiceProvider binds this
+ * contextually for exactly that reason.
  */
 class AiReranker implements Reranker
 {
-    public function __construct(private readonly Reranker $fallback = new NullReranker) {}
+    public function __construct(
+        private readonly Reranker $fallback = new NullReranker,
+        private readonly string $corpus = 'books',
+    ) {}
 
     /**
      * @param  Collection<int, RetrievedChunk>  $candidates
@@ -33,7 +44,7 @@ class AiReranker implements Reranker
         // Only the head of the fused list is worth a cross-encoder's time, and
         // this is the first lever to pull if the stage is too slow -- lower it
         // before turning reranking off.
-        $candidates = $candidates->take((int) config('books.retrieval.rerank.candidates'))->values();
+        $candidates = $candidates->take((int) config("{$this->corpus}.retrieval.rerank.candidates"))->values();
 
         try {
             $response = Reranking::of($candidates
@@ -44,8 +55,8 @@ class AiReranker implements Reranker
                 ->limit($limit)
                 ->rerank(
                     $query,
-                    (string) config('books.retrieval.rerank.provider'),
-                    (string) config('books.retrieval.rerank.model'),
+                    (string) config("{$this->corpus}.retrieval.rerank.provider"),
+                    (string) config("{$this->corpus}.retrieval.rerank.model"),
                 );
         } catch (Throwable $exception) {
             // Fail closed. A reranking outage degrades to fused order, which is

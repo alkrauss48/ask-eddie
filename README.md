@@ -20,6 +20,9 @@ Getting there takes two halves:
 5. **Bring in the house's own bar.** Load the menus, drinks and recipes from
    the-krauss-haus into a second corpus — structured enough to answer "not whiskey" exactly —
    see [Step 5: the house corpus](#step-5-the-house-corpus).
+6. **Put a second bartender behind it.** Sasha works the same bar from the other end of the
+   century, names only drinks the house pours, and shares one command with Eddie — see
+   [Step 6: Sasha](#step-6-sasha).
 
 ---
 
@@ -425,7 +428,7 @@ RRF fuses the two on rank alone, never on the channels' own scores — cosine si
 changes with the corpus. With `k = 60`, a passage both channels found in their top ten beats
 one a single channel put first, which is the property being bought.
 
-`eddie:ask --sources` prints both channel ranks beside the fused score. That is not
+`bar:ask --sources` prints both channel ranks beside the fused score. That is not
 decoration: a hybrid search where one channel silently returns nothing answers questions
 perfectly well, slightly worse, in a way no single answer reveals. A column of dashes shows
 it immediately.
@@ -464,8 +467,8 @@ sail artisan books:embed --book=heres-how-1927 # time one small book first
 sail artisan books:embed                       # then the corpus
 sail artisan books:embed --verify
 
-sail artisan eddie:ask "what goes in a Blue Lady?" --sources
-sail artisan eddie:ask "a bitter gin drink with orange" --sources
+sail artisan bar:ask "what goes in a Blue Lady?" --sources
+sail artisan bar:ask "a bitter gin drink with orange" --sources
 ```
 
 Eddie's answer streams: it is written to the terminal as the model produces it, and a dim
@@ -587,7 +590,7 @@ difference from using Cohere is the name in configuration.
 | Command | What it does |
 | --- | --- |
 | `books:embed` | Embeds indexable chunks. `--book=slug` (repeatable), `--force`, `--batch=`, `--dry-run`, `--verify`. Resumable; holds a cache lock. |
-| `eddie:ask` | Asks Eddie a question, streaming the answer as it is written. `--sources` shows both channel ranks and the fused score, `--retrieval-only` stops before the language model, `--limit=`. |
+| `bar:ask` | Asks a bartender a question, streaming the answer as it is written. `--bartender=eddie\|sasha` picks who, and with them the corpus; `--sources` shows both channel ranks and the fused score, `--retrieval-only` stops before the language model, `--limit=`. See [Step 6](#step-6-sasha). |
 
 ### Configuration
 
@@ -862,7 +865,7 @@ the house's own bar.
 
 It exists so a second bartender can work the same bar from the other end of the century, and
 name only drinks the house actually pours. Step 5 builds the corpus; nothing here is
-AI-facing yet.
+AI-facing. [Step 6](#step-6-sasha) is where it reaches a bartender.
 
 ```
 the-krauss-haus (239 TypeScript modules)
@@ -1105,6 +1108,186 @@ sail artisan house:import               # writes nothing — the idempotency che
 
 ---
 
+## Step 6: Sasha
+
+A second bartender, working the same bar from the other end of the century. Eddie reads a
+shelf of public-domain manuals and may invent a drink but never a source. Sasha reads the
+house's own menus and may reason about anything but never *name* a drink the house does not
+pour. Both rules protect the same thing — a claim a guest cannot check — and both sit next
+to an instruction that invites exactly the opposite, which is why each is stated flatly
+rather than left for the model to infer.
+
+```
+         SearchTheBooks ─────► ChunkRetriever ─┐                  ┌─ book_chunks
+                                               ├─ HybridRetriever ┤
+         SearchTheHouse ─────► HouseRetriever ─┘                  └─ house_chunks
+                                                                        ▲
+  EddieAgent ── SurveyTheBooks ───► DrinkSurveyor ──► drinks             │
+  SashaAgent ── BrowseTheMenus ───► MenuBrowser   ──► house_cocktails ───┘
+       │                                                (facets, no vector)
+       └──────────────► bar:ask --bartender= ◄─── config/bar.php
+```
+
+### Two tools each, and the split is the same split
+
+Eddie has a semantic tool and a counting tool. Sasha has a semantic tool and a *filtering*
+tool, and the reason is sharper than symmetry.
+
+"I don't like whiskey, what else have you got" is a negation, and negation is the thing
+dense retrieval is worst at. An embedding of "not whiskey" sits among the whiskey drinks —
+this is not a hypothetical, it is what the real corpus does:
+
+```
+sail artisan bar:ask --bartender=sasha --retrieval-only "something bright without whiskey"
+
+  1. Port Light        Bourbon, honey, lemon, passion fruit.
+  2. Whiskey Sour      Whiskey, lemon, simple syrup, egg white.
+  3. Daiquiri          Blended light rum, lime, simple syrup.
+```
+
+A model handed that list will name the Whiskey Sour. `BrowseTheMenus` answers the same
+question with a `WHERE` clause over `house_cocktails` and its facet pivots — 81 of the 138
+drinks are citrus and not whiskey, exactly, every time — which is what the nine tag
+categories imported in Step 5 were for.
+
+So the two halves are:
+
+| Tool | Kind | Answers |
+| --- | --- | --- |
+| `SearchTheHouse` | hybrid dense + lexical over `house_chunks` | what a record *says* — a build, a syrup, a bartender, the shape of a flight |
+| `BrowseTheMenus` | plain SQL over the facet tables | *which* drinks qualify, and which are ruled out |
+
+`BrowseTheMenus` takes thirteen optional parameters and requires none, because "what's
+good?" has to be a legal call. Nine are facets (`base_spirit`, `flavor`, `style`, `origin`,
+`alcohol_level`, `technique`, `temperature`, `prep_time`, `menu`), two are ingredient
+filters, one is a limit — and two of them negate (`without_base_spirit`,
+`without_ingredient`). The negating pair is the point, and the tool description says so to
+the model in as many words.
+
+### One retriever body, two corpora
+
+`ChunkRetriever` and `HouseRetriever` are each about twenty lines. Everything they do lives
+once, in `HybridRetriever`, and what differs between them is a `CorpusProfile` value object:
+which model, which config prefix, whether an approximate index needs `ef_search` set per
+query.
+
+A value object rather than an abstract base with hooks, deliberately. The difference between
+the corpora is entirely *data*; a `protected function denseQuery(): Builder` hook would make
+the query bodies overridable, and the thing being protected here is a method body. The moment
+a subclass can rewrite `dense()`, it can drop `whereNotNull('embedding')` and nothing will
+notice. So `is_indexable` on both channels, the array passed to `whereVectorSimilarTo`,
+`websearch_to_tsquery`, `ts_rank_cd(…, 32)` and the single-query hydrate exist exactly once,
+with no seam in them.
+
+House retrieval costs **three** queries where books costs five: no `set local
+hnsw.ef_search` (there is no approximate index to tune, and `config/house.php` has no such
+key), and no eager-loaded book (a house citation is a URL, not a row in another table).
+Both counts are pinned by a test.
+
+### The reranker was the sharp edge
+
+`AiReranker` read `config('books.retrieval.rerank.candidates')`, `.provider` and `.model`
+literally, and the `Reranker` binding was a single global one. A `HouseRetriever` resolving
+that binding would have silently reranked house passages with the books corpus's knobs —
+including its `enabled` flag, which is `false` on an Apple Silicon dev machine. So the class
+takes a corpus name, and `AppServiceProvider` binds it contextually:
+
+```php
+$this->app->when(HouseRetriever::class)
+    ->needs(Reranker::class)
+    ->give(fn (): Reranker => $this->reranker('house'));
+```
+
+`HouseRetrieverTest` asserts this through the request the cross-encoder actually received
+rather than through the bound class, because the binding is only half of it: a reranker
+resolved correctly and then reading the books' knobs is the same defect wearing a different
+coat.
+
+### What Sasha is handed, and what she is not
+
+`CocktailSummary::payload()` is eight keys — `name`, `description`, `build`, `served`,
+`tags`, `on`, `notes`, `url` — asserted by *count*, the discipline
+`BookChunkCitationTest` (eight) and `HouseChunkCitationTest` (five) already hold.
+
+It is a value object rather than the model, following `DrinkSummary` rather than `BookChunk`.
+`BookChunk::toArray()` had to *become* its payload because `SimilaritySearch` serializes the
+model out of the application's reach; nothing does that here, so `HouseCocktail::toArray()`
+never reaches a prompt and a column added to the table cannot leak into an answer by being
+forgotten in a `$hidden` list. That matters more than usual here: `house_cocktails.source`
+holds the entire exported site record, image URLs and all.
+
+`url` is absolute. The catalog stores the site's own path (`/cocktails/mai-tai`) and only
+chunks were absolutized at render time; a payload is a citation too, and a guest handed a
+relative href cannot check anything. Both now go through one `HouseUrl::absolute()`.
+
+### Three returns, not two
+
+`BrowseTheMenus` distinguishes an unloaded house, a filter nothing matched, and an outage —
+the same three-way split `SurveyTheBooks` keeps, for the same reason: a bare `[]` reads to a
+model as "the house pours nothing like that", which is a false claim about the menus.
+
+It also carries two things about its own answer that a bartender can otherwise get wrong
+invisibly:
+
+- **The denominator.** "81 of the house's drinks fit that, and here are 3 of them" — because
+  "here are three" reads as the whole list, and `DrinkCoverage` already established that a
+  count without its denominator is a different sentence.
+- **The words it did not know.** A guest asking for scotch matches nothing, and reporting
+  that as "nothing fits" is true about the wrong thing: there is no Scotch facet at all, and
+  the house does pour whiskey. The tool names the unrecognised value instead, and Sasha's
+  instructions tell her to say which word it was.
+
+### `bar:ask`, and one registry
+
+`eddie:ask` became `bar:ask`. `--bartender` selects a row in `config/bar.php`, and that row
+decides the agent **and** the retriever together — selecting them separately is the bug the
+shape exists to prevent, since `--sources` on Sasha's answer showing Eddie's passages would
+be a table of real citations from the wrong corpus with nothing on screen to say so.
+
+Provider and model come from the registry and are passed at call time rather than declared
+as `#[Provider]` / `#[Model]` attributes on the agent classes, so `SASHA_PROVIDER` and
+`SASHA_TEXT_MODEL` can move one bartender to another model without touching a class.
+`AnswerStream`'s in-character tool labels moved out of a private const into
+`config('bar.labels')` for the same reason: the stream is the one place that decides what a
+guest may see of a tool call, and that should not also be the place that knows how each
+bartender talks about their own tools.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `bar:ask` | Asks a bartender a question, streaming the answer. `--bartender=eddie\|sasha`, `--sources`, `--retrieval-only`, `--limit=`. |
+
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BAR_DEFAULT_BARTENDER` | `eddie` | Who answers when `--bartender` is not given. |
+| `BAR_MENU_LIMIT` | `8` | Drinks `BrowseTheMenus` returns when the model does not say. |
+| `EDDIE_PROVIDER` / `EDDIE_TEXT_MODEL` | unset | Falls back to `ai.default`. |
+| `SASHA_PROVIDER` / `SASHA_TEXT_MODEL` | unset | Same, independently. |
+| `HOUSE_RETRIEVAL_LIMIT` | `6` | Passages handed to Sasha. |
+| `HOUSE_RERANK_ENABLED` | `true` | Independent of `BOOKS_RERANK_ENABLED`, via contextual binding. |
+
+### Running it
+
+```bash
+# No API key needed for this one.
+sail artisan bar:ask --bartender=sasha --retrieval-only "something bright without whiskey"
+
+sail artisan bar:ask --bartender=sasha "I don't like whiskey, what's good?"
+sail artisan bar:ask --bartender=sasha --sources "what's like a negroni"
+sail artisan bar:ask --bartender=eddie "gin fizz"     # unchanged behaviour
+```
+
+Every drink Sasha names should appear in `select title from house_cocktails`. That is a
+prompt-level guarantee rather than a hard one — the same standing as Eddie's citation rule,
+which the project already accepts. A `--check-names` flag that greps an answer for titles
+absent from that table would turn it into a measurement, and is the obvious next move if she
+drifts.
+
+---
+
 ## Local development
 
 Standard Laravel Sail, with two local modifications:
@@ -1143,7 +1326,8 @@ BlockSegmenter,ChunkPacker,ChunkClassifier,TokenEstimator}Test.php` and
 
 Step 3 adds `tests/Unit/ReciprocalRankFusionTest.php` and
 `tests/Feature/{BookChunkEmbeddingSchema,BooksEmbedCommand,ChunkRetriever,SearchTheBooksTool,
-TeiRerankerProvider,Reranker,EddieAskCommand}Test.php`. **No test requires TEI to be running** —
+TeiRerankerProvider,Reranker}Test.php` (plus `BarAskCommandTest`, which Step 6 renamed from
+`EddieAskCommandTest` and extended to both bartenders). **No test requires TEI to be running** —
 `Http::preventStrayRequests()` is on for the whole Feature suite and `phpunit.xml` points both
 TEI URLs at an unroutable host as a second backstop. `Embeddings::fake()` clones the
 *resolved* provider, so fake vectors come out at 1024 dimensions with nothing said. Vectors in
@@ -1192,6 +1376,17 @@ keys, the same discipline `BookChunkCitationTest` holds over the eight-key book 
 `toContain` would pass forever while a column added next month quietly joined the context. And
 `HouseImporterTest` asserts a second import writes *nothing*, which is the only thing that
 makes a first import's report mean anything.
+
+Step 6 adds `tests/Feature/{HouseRetriever,SearchTheHouseTool,BrowseTheMenusTool,
+CocktailSummary,SashaAgent}Test.php` and extends `BarAskCommandTest`. The thirteen
+`ChunkRetrieverTest` cases and thirteen `RerankerTest` cases were the safety net on the
+`HybridRetriever` extraction rather than casualties of it — including "costs four queries",
+which asserts exactly five log entries and would have caught a stray `ef_search` statement.
+`HouseRetrieverTest` holds the same shape one corpus over, plus "costs three queries" and the
+two contextual-binding cases that pin the house's reranker to the house's own settings.
+`BrowseTheMenusToolTest` runs against the same three-cocktail fixture — one gin, one rum, one
+whiskey — so an exclusion is *visible* rather than statistical, and it pins all three distinct
+returns along with the unrecognised-word caveat.
 
 One trap worth knowing when adding to these: Laravel matches `expectsOutputToContain` through
 Mockery, which hands each written line to the first expectation whose matcher accepts it. Two
