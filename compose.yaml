@@ -19,6 +19,17 @@ services:
             IGNITION_LOCAL_SITES_PATH: '${PWD}'
         volumes:
             - '.:/var/www/html'
+            # The house export is committed to the-krauss-haus, not to this
+            # repository, and nothing outside the project is visible inside the
+            # container -- so unlike BOOKS_PATH, which defaults to a path under
+            # the bind mount above, this one cannot be reached by setting an
+            # environment variable alone. The sibling checkout is mounted
+            # read-only and HOUSE_PATH points at it from the inside.
+            #
+            # A missing sibling checkout makes Docker create an empty directory
+            # here rather than failing, which `house:import` reports as an
+            # incomplete export naming HOUSE_PATH.
+            - '${HOUSE_SOURCE:-../the-krauss-haus/static/data}:/var/www/house-data:ro'
         networks:
             - sail
         depends_on:

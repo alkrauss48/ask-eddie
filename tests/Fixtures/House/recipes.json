@@ -1,0 +1,16 @@
+[
+    {
+        "slug": "blackberry-syrup",
+        "name": "Blackberry Syrup",
+        "url": "/recipes/blackberry-syrup",
+        "category": "Syrups",
+        "description": "A rich syrup for stirred drinks.",
+        "ingredients": [
+            "12oz blackberries",
+            "8oz sugar",
+            "8oz water"
+        ],
+        "instructions": "Simmer until the berries collapse, then strain through a chinois.",
+        "notes": "Keeps two weeks refrigerated."
+    }
+]

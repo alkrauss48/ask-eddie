@@ -1,0 +1,62 @@
+[
+    {
+        "label": "Base Alcohol",
+        "tags": [
+            {
+                "label": "Rum",
+                "order": 1
+            },
+            {
+                "label": "Whiskey",
+                "order": 2
+            },
+            {
+                "label": "Gin",
+                "order": 3
+            }
+        ]
+    },
+    {
+        "label": "Flavor Profile",
+        "tags": [
+            {
+                "label": "Spiced",
+                "order": 1
+            },
+            {
+                "label": "Fruity",
+                "order": 2
+            },
+            {
+                "label": "Herbal",
+                "order": 3
+            }
+        ]
+    },
+    {
+        "label": "Technique",
+        "tags": [
+            {
+                "label": "Shaken",
+                "order": 1
+            },
+            {
+                "label": "Stirred",
+                "order": 2
+            },
+            {
+                "label": "Built in Glass",
+                "order": 3
+            }
+        ]
+    },
+    {
+        "label": "Temperature",
+        "tags": [
+            {
+                "label": "Hot",
+                "order": 1
+            }
+        ]
+    }
+]

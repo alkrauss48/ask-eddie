@@ -1,0 +1,149 @@
+[
+    {
+        "slug": "gin-basil-smash",
+        "title": "Gin Basil Smash",
+        "subtitle": null,
+        "description": "Gin, lemon, basil, sugar.",
+        "url": "/cocktails/gin-basil-smash",
+        "image_url": "https://example.test/images/gin-basil-smash.webp",
+        "thumbnail_url": "https://example.test/thumbs/gin-basil-smash.webp",
+        "method": "Shaken",
+        "served_in": "Double Rocks Glass",
+        "ice": "Small Cubes",
+        "has_straw": false,
+        "servings": null,
+        "notes": null,
+        "bartender_slug": null,
+        "ingredients": [
+            {
+                "kind": "ingredient",
+                "slug": "tanqueray",
+                "amount": "2oz",
+                "label": null
+            },
+            {
+                "kind": "text",
+                "text": "8 basil leaves"
+            }
+        ],
+        "tags": [
+            {
+                "label": "Gin",
+                "category": "Base Alcohol"
+            },
+            {
+                "label": "Herbal",
+                "category": "Flavor Profile"
+            },
+            {
+                "label": "Shaken",
+                "category": "Technique"
+            }
+        ],
+        "variations": []
+    },
+    {
+        "slug": "hot-buttered-rum",
+        "title": "Hot Buttered Rum",
+        "subtitle": null,
+        "description": "Dark rum, butter batter, boiling water.",
+        "url": "/cocktails/hot-buttered-rum",
+        "image_url": "https://example.test/images/hot-buttered-rum.webp",
+        "thumbnail_url": "https://example.test/thumbs/hot-buttered-rum.webp",
+        "method": "Built in Glass",
+        "served_in": "Mug",
+        "ice": "Hot",
+        "has_straw": false,
+        "servings": 4,
+        "notes": "Keep the batter in the freezer; it holds for a month.",
+        "bartender_slug": null,
+        "ingredients": [
+            {
+                "kind": "ingredient",
+                "slug": "smith-and-cross",
+                "amount": "1.5oz",
+                "label": null
+            },
+            {
+                "kind": "text",
+                "text": "6oz boiling water"
+            }
+        ],
+        "tags": [
+            {
+                "label": "Rum",
+                "category": "Base Alcohol"
+            },
+            {
+                "label": "Spiced",
+                "category": "Flavor Profile"
+            },
+            {
+                "label": "Hot",
+                "category": "Temperature"
+            }
+        ],
+        "variations": []
+    },
+    {
+        "slug": "midnight-rambler",
+        "title": "Midnight Rambler",
+        "subtitle": "Our own house original",
+        "description": "Rye, blackberry, lemon, a long twist.",
+        "url": "/cocktails/midnight-rambler",
+        "image_url": "https://example.test/images/midnight-rambler.webp",
+        "thumbnail_url": "https://example.test/thumbs/midnight-rambler.webp",
+        "method": "Stirred",
+        "served_in": "Nick & Nora Glass",
+        "ice": "None",
+        "has_straw": false,
+        "servings": null,
+        "notes": "Express the twist over the surface and drop it in.",
+        "bartender_slug": "antoine-peychaud",
+        "ingredients": [
+            {
+                "kind": "ingredient",
+                "slug": "rye-whiskey",
+                "amount": "2oz",
+                "label": null
+            },
+            {
+                "kind": "ingredient",
+                "slug": "blackberry-syrup",
+                "amount": ".5oz",
+                "label": null
+            },
+            {
+                "kind": "ingredient",
+                "slug": "lemon-garnish",
+                "amount": null,
+                "label": "Garnish: Lemon twist"
+            }
+        ],
+        "tags": [
+            {
+                "label": "Whiskey",
+                "category": "Base Alcohol"
+            },
+            {
+                "label": "Fruity",
+                "category": "Flavor Profile"
+            },
+            {
+                "label": "Stirred",
+                "category": "Technique"
+            }
+        ],
+        "variations": [
+            {
+                "name": "Long Rambler",
+                "ingredients": [
+                    {
+                        "kind": "text",
+                        "text": "Top with 2oz soda and serve in a highball."
+                    }
+                ]
+            }
+        ]
+    }
+]

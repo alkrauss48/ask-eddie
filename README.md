@@ -17,6 +17,9 @@ Getting there takes two halves:
 4. **Let him count.** Fold the printed headings into canonical drinks so a question about the
    shelf as a whole is a query rather than a guess — see
    [Step 4: the tally](#step-4-the-tally).
+5. **Bring in the house's own bar.** Load the menus, drinks and recipes from
+   the-krauss-haus into a second corpus — structured enough to answer "not whiskey" exactly —
+   see [Step 5: the house corpus](#step-5-the-house-corpus).
 
 ---
 
@@ -849,6 +852,259 @@ it.
 
 ---
 
+## Step 5: the house corpus
+
+A second shelf, and nothing like the first one. Steps 1 through 4 exist to turn scanned
+paper into text that can prove where it came from; this one starts from data that was
+authored deliberately — the 138 drinks, 131 ingredients, 29 recipes, 3 menus, 27 bartenders
+and 10 flights at [the-krauss-haus](https://github.com/alkrauss48/the-krauss-haus), which is
+the house's own bar.
+
+It exists so a second bartender can work the same bar from the other end of the century, and
+name only drinks the house actually pours. Step 5 builds the corpus; nothing here is
+AI-facing yet.
+
+```
+the-krauss-haus (239 TypeScript modules)
+        │
+        │  npm run export:data     Vite ssrLoadModule → resolved objects →
+        │                          slug-referenced JSON, committed to that repo
+        ▼
+   static/data/*.json  ──────────► the "house" disk (HOUSE_PATH)
+        │
+        │  house:import            catalog tables — cocktails, ingredients, tags,
+        │                          menus, recipes, bartenders, flights + pivots —
+        │                          and one rendered chunk per record (207 of them)
+        │
+        │  house:embed             the SAME TEI bge-m3 / 1024d server the books use
+        ▼
+   house_chunks  vector(1024) + generated tsvector
+```
+
+### The data has to be evaluated, not parsed
+
+The site holds no JSON, no YAML and no CMS — its `AGENTS.md` says so on purpose. Every record
+is a hand-authored TypeScript module, and records reference each other by *live object
+reference* rather than by key:
+
+```ts
+{ amount: '.5oz', ingredient: Ingredients.BaseSpirits.SMITH_AND_CROSS }
+```
+
+Regex is not an option: `costPerOz` is frequently an unevaluated expression (`48 / 25`), and
+every cross-reference is an identifier rather than a string. So the export runs *there*,
+through Vite's `ssrLoadModule`, and commits slug-referenced JSON that this side reads. The
+manifest's checksum is taken over the raw bytes of the dataset files, in a fixed order, which
+is what `house:import --verify` recomputes — so a file edited by hand rather than re-exported
+is caught before anybody believes it.
+
+### Two rules keep the corpora apart, and one keeps them together
+
+1. **Separate tables.** `books:embed --verify` asserts exactly one
+   `(model, dimensions, version)` triple *table-wide* over `book_chunks`. A shared table would
+   stretch that invariant across two corpora with two independent renderer versions, and the
+   first house render change would fail Eddie's verifier. `house_chunks` is its own table with
+   its own vector column and its own generated tsvector.
+2. **The same embedding server.** Corpus and query vectors must come from one implementation,
+   so the house embeds through the same TEI `bge-m3` at 1024 dimensions. `house:embed --verify`
+   asserts that `house.embedding` still agrees with `books.embedding` on provider, model and
+   width, and names both values when it does not — because that failure is invisible in every
+   row.
+
+The *retrieval* knobs differ, because the corpora are three orders of magnitude apart. Eddie's
+60 candidates per channel is 0.24% of his 24,926 chunks; on 207 it would be 29%, so nearly
+everything would land in both lists and RRF would stop discriminating.
+
+### What becomes a chunk — 207, not 338
+
+| kind | chunks |
+| --- | --- |
+| cocktail | 138 |
+| recipe | 29 |
+| bartender | 27 |
+| flight | 10 |
+| menu | 3 |
+| ~~ingredient~~ | ~~131~~ — catalog only |
+| **total** | **207** |
+
+**The 131 ingredients are deliberately not chunked**, and it is the largest cut in the design.
+A rendered ingredient reads "Smith and Cross. Jamaican Rum, a base spirit." — near-zero prose,
+and dozens of them are mutually near-identical under bge-m3, so a query for "rum" would come
+back as thirty nearly-tied ingredient chunks with every actual cocktail pushed out of the
+window. They also have no URL of their own to cite: `/ingredients` is an index page with no
+`[slug]` route. They stay a first-class catalog table for structured filtering, and every
+ingredient title still reaches retrieval as a keyword on the drinks that pour it.
+
+### Structure is not a nicety here
+
+"I don't like whiskey, what else have you got" is a negation, and negation is what dense
+retrieval is worst at — an embedding of "not whiskey" sits next to the whiskey drinks. That is
+why the catalog is nine real tables rather than a blob: every cocktail carries its base
+spirit, flavour profile, technique and glass as rows a `WHERE` clause can rule out. The 48
+tags fall into nine categories that are precisely the axes a guest recommends along.
+
+Decisions worth knowing:
+
+- **A menu and a flight are one table.** Both are a titled, ordered list of cocktails with a
+  slug, differing only in a section title, a featured flag and a subtitle — all nullable
+  columns rather than a second pair of tables. Keeping them apart would cost every query a
+  union, and "which lists is this drink on" is one Sasha asks constantly. `is_featured` is part
+  of the pivot's unique key on purpose: a menu drink can sit in a section *and* in the featured
+  list, and both facts are true.
+- **`house_cocktail_ingredients.house_ingredient_id` is nullable.** The site's ingredient list
+  is a real union — measured pours beside bare strings like `'8 basil leaves'` and
+  `'Served in a smoked glass'`. Flattening the free-text half into fake ingredient rows would
+  invent catalog members the site does not have, and every structured query could then find
+  them.
+- **`Recipe.ingredients` stays free text.** There is deliberately no fuzzy link from
+  `"9oz 40% ABV Vodka"` back to a catalog slug. That is the same wrong-merge risk the drink
+  layer already refuses: a real recipe, a real URL, and the wrong ingredient in it.
+- **`source` is `json`, not `jsonb`.** jsonb canonicalizes key order, which would make a
+  cocktail's `content_hash` unstable across a round trip that changed nothing — and an unstable
+  hash means every import reports a change, so no import can be trusted when it reports one.
+
+### No approximate index, and no knob pretending to tune one
+
+`house_chunks` has **no HNSW index**, and `config/house.php` has **no `ef_search` key**. At 207
+rows a 1024-wide exact scan is about 850 KB and sub-millisecond, with 100% recall. Approximate
+search buys nothing measurable at this size and costs real recall risk: pgvector post-filters,
+so an `is_indexable` predicate over an approximate scan can quietly return a short list — the
+exact failure `books.retrieval.ef_search` exists to prevent, arriving through a different door.
+`HouseChunkEmbeddingSchemaTest` asserts the index's *absence* by name, so adding one later is a
+decision rather than an accident.
+
+### Rendering, and why there is no chunker
+
+Every record is one chunk, so there is no packer, no segmenter, no byte offset and no page
+arithmetic — roughly 40 of the 47 files in `app/Services/Books/` have no analogue here.
+`HouseRenderer` nonetheless *asserts* the 1,600-character ceiling and throws, because the
+project treats `max_chars` as an assertion rather than a packing hint. Everything fits today;
+a flight of twenty cocktails added next year would otherwise render long, be embedded
+truncated, and retrieve on text nobody chose.
+
+A cocktail renders as its name, its one-line description, its measured build, how it is made,
+who it is credited to, its tags, the menus it is on, its notes and its variations. The build
+is a sentence rather than key-value pairs — "Shaken, served in a Tiki Mug, over crushed ice,
+with a straw" — because the string is embedded, and that is how a guest says it.
+
+Alongside the body, each chunk carries a `keywords` column: the structured vocabulary
+flattened to text (`Smith and Cross`, `Jamaican Rum`, `Higher Alcohol`, `Tiki`, `Summer Menu`,
+`Trader Vic`). It is indexed at weight B, above the body, because a tag that says "Tiki" is a
+stronger claim about a drink than a sentence that happens to mention tiki bars — and it is what
+lets the un-chunked ingredients still be findable.
+
+### Measured: flights dominate mood queries
+
+Against the real corpus, embedded and scanned exactly:
+
+| query | top-25 mix |
+| --- | --- |
+| "a bright citrusy gin drink" | cocktail 24, bartender 1 — *Gin and Tonic, Negroni Bianco Bergamotto, Singapore Sling* |
+| "what should I make with rye whiskey" | cocktail 24, recipe 1 — *Sazerac, Whiskey Sour, Vieux Carré, Manhattan* |
+| "something smoky and agave-forward" | cocktail 13, **path 9** — the top six are all flights |
+
+The dense channel is good when a query names an ingredient or a category, and skews to flights
+when it describes a mood. The cause is structural rather than a defect: a cocktail renders
+mostly as a measured build, a flight renders as flavour prose, and a conversational sentence
+embeds nearer the prose. Ten of 207 chunks carry nearly all the mood language in the corpus.
+
+This is the concrete argument for keeping the lexical channel at this size rather than going
+dense-only — the tag vocabulary is what pulls the named drinks back up. It is also why the
+flights are *not* cut: a flight genuinely is the answer to "what should we drink tonight", and
+the drinks are still there (Oaxaca Old Fashioned ranks 7th on a query containing neither
+"mezcal" nor its own name).
+
+### Staleness is a hash, so re-rendering is cheap
+
+`content_hash` is a sha256 over the *embedded* string, prefix included — not over `text`
+alone, so a cocktail that is renamed and nothing else still becomes pending. `house:embed`
+records that hash as `embedded_content_hash`, and a row where the two disagree is simply
+pending again.
+
+That is one step further than books, where a passage that moved after being embedded shows up
+as `embedded_at < updated_at` and `--verify` reports it as a failure an operator has to act on.
+Here the next run just fixes it, which is what makes bumping `HouseRenderer::VERSION` cheap
+enough to actually do.
+
+### Rendering is folded into `house:import`
+
+There is no `house:chunk`. At 207 records the render is seconds, and `content_hash` plus
+`renderer_version` already decide what gets rewritten, so a separate command would only be a
+second thing to forget to run. The whole run is one transaction — a half-applied catalog is a
+corpus that answers questions with menus missing a round — and a dry run does the real work
+inside a transaction it always rolls back, so its counts are the counts rather than an
+estimate of them.
+
+**A second run must write nothing.** Without that, "did anything change" is unanswerable, and
+an import that reports a change means nothing because every run reports one.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `house:import` | Reads the export, writes the catalog, renders the chunks. `--force`, `--dry-run`, `--verify`. Holds a cache lock; a run is about a second. |
+| `house:embed` | Embeds the chunks through TEI. `--force`, `--batch=`, `--dry-run`, `--verify`. |
+| `house:status` | Catalog counts against the export, chunk counts against the embeddings. Deliberately has no `--verify` of its own — a third verifier unioning the other two would drift out of sync the first time an invariant was added to only one. |
+
+### What `--verify` asserts
+
+`house:import --verify`:
+
+- the manifest's checksum reproduces from the bytes on disk, and its counts match the files
+- the counts in the database match the export
+- every cocktail ingredient row names either a catalog ingredient or some text, never neither
+- **every cocktail has at least one ingredient and at least one tag** — a drink failing that is
+  invisible to every structured filter, unrecommendable by anyone, silently
+- every menu and flight lists at least one drink
+- one chunk exists per chunkable record, each one reproducing under a re-render, and each one
+  carrying a `content_hash` that describes its own text
+
+`house:embed --verify` mirrors the books invariants scoped to `house_chunks`, and adds the
+cross-corpus one: that the house and the books are still configured for the same model at the
+same width.
+
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HOUSE_SOURCE` | `../the-krauss-haus/static/data` | The export on the **host**. `compose.yaml` mounts it read-only. |
+| `HOUSE_PATH` | `/var/www/house-data` | Where that mount lands **inside** the container. |
+| `HOUSE_SITE_URL` | `https://thekrausshaus.com` | The origin a citation's link hangs from. |
+| `HOUSE_RENDER_MAX_CHARS` | `1600` | A ceiling that is asserted, not a packing hint. |
+| `HOUSE_EMBEDDING_MODEL` | `BAAI/bge-m3` | Must match `BOOKS_EMBEDDING_MODEL`; `--verify` says so. |
+| `HOUSE_EMBEDDING_DIMENSIONS` | `1024` | Must match `BOOKS_EMBEDDING_DIMENSIONS`. |
+| `HOUSE_RETRIEVAL_DENSE` | `25` | Per channel. 60 would be 29% of this corpus. |
+| `HOUSE_RETRIEVAL_LEXICAL` | `25` | As above. |
+| `HOUSE_RETRIEVAL_MIN_SIMILARITY` | `0.25` | Lower than books', because short recipe chunks score lower on length rather than on relevance. |
+| `HOUSE_RETRIEVAL_LIMIT` | `6` | Passages per answer. |
+| `HOUSE_RERANK_ENABLED` | `true` | Configured per corpus, so turning books' off locally does not silently turn this off too. |
+
+Unlike `BOOKS_PATH`, which defaults to a path under the project's own bind mount, the house
+export lives outside this repository entirely — so it cannot be reached by setting an
+environment variable alone. `compose.yaml` mounts the sibling checkout; a missing checkout
+makes Docker create an empty directory, which `house:import` reports as an incomplete export
+naming the variable to set.
+
+### Running it
+
+```bash
+# In the-krauss-haus, once the content changes:
+npm run export:data
+
+# Here:
+sail artisan migrate
+sail artisan house:import --dry-run     # real counts, nothing written
+sail artisan house:import
+sail artisan house:import --verify
+sail artisan house:embed
+sail artisan house:embed --verify
+sail artisan house:status
+
+sail artisan house:import               # writes nothing — the idempotency check
+```
+
+---
+
 ## Local development
 
 Standard Laravel Sail, with two local modifications:
@@ -922,3 +1178,22 @@ preambles, including that a shelf whose every row was set aside has still been t
 distinction `SurveyTheBooks` exists to keep. And `SurveyTheBooksToolTest` pins the ranking
 defect directly: a drink in five books across the whole span ranks *below* one in three books
 from the 1860s, when the question is about the 1860s.
+
+Step 5 adds `tests/Feature/{HouseChunkCitation,HouseChunkEmbeddingSchema,HouseImporter,
+HouseRenderer,HouseImportCommand,HouseEmbedCommand,HouseStatusCommand}Test.php`. They run
+against `tests/Fixtures/House/` — a real export in miniature, three cocktails and a menu and a
+flight, with a manifest whose checksum is taken over the actual file bytes, so the checksum
+path is exercised rather than skipped. The tests that need the export to *change* copy that
+directory and rewrite one file, which is how "a drink came off the menu" is tested without
+waiting for the site to change.
+
+Two are the ones to keep. `HouseChunkCitationTest` asserts the passage payload is exactly five
+keys, the same discipline `BookChunkCitationTest` holds over the eight-key book payload — a
+`toContain` would pass forever while a column added next month quietly joined the context. And
+`HouseImporterTest` asserts a second import writes *nothing*, which is the only thing that
+makes a first import's report mean anything.
+
+One trap worth knowing when adding to these: Laravel matches `expectsOutputToContain` through
+Mockery, which hands each written line to the first expectation whose matcher accepts it. Two
+expected substrings that both appear on one line can starve each other, so put the narrower
+one first — or assert the fact off the service rather than off the output.

@@ -4,11 +4,11 @@ namespace App\Services\Books;
 
 use App\Models\Book;
 use App\Models\BookChunk;
+use App\Services\Embedding\BatchEmbedder;
+use App\Services\Embedding\EmbeddingReport;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
-use Laravel\Ai\Embeddings;
-use RuntimeException;
 
 /**
  * Turns chunks into vectors, one batch at a time.
@@ -25,6 +25,11 @@ use RuntimeException;
  * the passage never states. The Python pipeline this replaces embedded the body
  * alone after lifting the heading out of it, which left "Blue Lady" unsearchable
  * in a book that is nothing but drink names. BooksEmbedCommandTest pins it.
+ *
+ * The request itself, and the guards that make it safe to write, belong to
+ * BatchEmbedder and are shared with the house corpus. What stays here is what
+ * is actually about books: which chunks are pending, how a book is paged
+ * through, and the invariants --verify asks of the finished corpus.
  */
 class ChunkEmbedder
 {
@@ -37,6 +42,20 @@ class ChunkEmbedder
      * are recorded per row too.
      */
     public const VERSION = 1;
+
+    private readonly BatchEmbedder $batch;
+
+    /**
+     * Constructed rather than injected, so that the container cannot hand this
+     * the house corpus's knobs. BatchEmbedder is corpus-scoped by name, and a
+     * type-hinted parameter would resolve to whichever one the container
+     * happened to build -- which is the kind of mistake that produces a working
+     * application and a wrongly embedded corpus.
+     */
+    public function __construct()
+    {
+        $this->batch = new BatchEmbedder('books');
+    }
 
     /**
      * Every chunk that needs a vector it does not have.
@@ -113,47 +132,19 @@ class ChunkEmbedder
     {
         $inputs = $chunks->map(fn (BookChunk $chunk): string => $chunk->embeddingText())->values()->all();
 
-        $response = Embeddings::for($inputs)
-            ->dimensions($this->dimensions())
-            // Caching 24,926 vectors into the database store would write about
-            // 100 MB for zero reuse: each input is embedded exactly once.
-            ->cache(0)
-            ->timeout((int) config('books.embedding.timeout'))
-            ->generate($this->provider(), $this->model());
+        // The batch's count and every vector's width are checked in there, and
+        // it throws rather than returning something that cannot be trusted --
+        // so reaching this line means the vectors line up with the chunks.
+        $batch = $this->batch->embed($inputs);
 
-        // With caching off, nothing in the package checks this. A short or long
-        // batch would attach every vector to its neighbour, producing a corpus
-        // that looks entirely fine and retrieves the wrong passage for every
-        // query -- the one failure here that is invisible from the outside.
-        if (count($response->embeddings) !== $chunks->count()) {
-            throw new RuntimeException(sprintf(
-                'The embedding provider returned %d vector(s) for %d input(s); refusing to write a mis-indexed batch.',
-                count($response->embeddings),
-                $chunks->count(),
-            ));
-        }
-
-        $model = $this->model();
-        $dimensions = $this->dimensions();
         $now = now();
 
-        DB::transaction(function () use ($chunks, $response, $model, $dimensions, $now): void {
+        DB::transaction(function () use ($chunks, $batch, $now): void {
             foreach ($chunks->values() as $index => $chunk) {
-                $vector = $response->embeddings[$index];
-
-                if (count($vector) !== $dimensions) {
-                    throw new RuntimeException(sprintf(
-                        'Chunk %d was embedded at %d dimensions, but the column holds %d.',
-                        $chunk->id,
-                        count($vector),
-                        $dimensions,
-                    ));
-                }
-
                 BookChunk::query()->whereKey($chunk->id)->update([
-                    'embedding' => '['.implode(',', $vector).']',
-                    'embedding_model' => $model,
-                    'embedding_dimensions' => $dimensions,
+                    'embedding' => $batch->literal($index),
+                    'embedding_model' => $batch->model,
+                    'embedding_dimensions' => $batch->dimensions,
                     'embedder_version' => self::VERSION,
                     'embedded_at' => $now,
                     // Written explicitly so that embedded_at is never behind
@@ -164,7 +155,7 @@ class ChunkEmbedder
             }
         });
 
-        return $response->tokens;
+        return $batch->tokens;
     }
 
     /**
@@ -275,16 +266,16 @@ class ChunkEmbedder
 
     public function provider(): string
     {
-        return (string) config('books.embedding.provider');
+        return $this->batch->provider();
     }
 
     public function model(): string
     {
-        return (string) config('books.embedding.model');
+        return $this->batch->model();
     }
 
     public function dimensions(): int
     {
-        return (int) config('books.embedding.dimensions');
+        return $this->batch->dimensions();
     }
 }

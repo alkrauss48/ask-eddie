@@ -6,6 +6,8 @@ use App\Models\BookChunk;
 use App\Models\BookPage;
 use App\Models\Drink;
 use App\Models\DrinkMention;
+use App\Services\House\HouseImporter;
+use App\Services\House\HouseImportReport;
 use App\Services\Retrieval\DrinkSurveyor;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Collection;
@@ -280,4 +282,27 @@ function talliedAcross(string $name, array $years): Drink
 function surveyor(): DrinkSurveyor
 {
     return app(DrinkSurveyor::class);
+}
+
+/**
+ * Point the house disk at a fixture export rather than at a sibling checkout.
+ *
+ * The fixture is a real export in miniature -- three cocktails, five
+ * ingredients, a recipe, two bartenders, a menu and a flight -- with a manifest
+ * whose checksum is taken over the actual file bytes, so `house:import --verify`
+ * exercises the checksum path rather than skipping it.
+ */
+function useHouseFixture(?string $directory = null): void
+{
+    config()->set('filesystems.disks.house.root', $directory ?? __DIR__.'/Fixtures/House');
+}
+
+/**
+ * Import the fixture export, returning what the run did.
+ */
+function importHouse(bool $force = false): HouseImportReport
+{
+    useHouseFixture();
+
+    return app(HouseImporter::class)->import($force);
 }

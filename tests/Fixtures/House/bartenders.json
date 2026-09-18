@@ -1,0 +1,20 @@
+[
+    {
+        "slug": "antoine-peychaud",
+        "name": "Antoine Peychaud",
+        "url": "/bartenders/antoine-peychaud",
+        "description": "A New Orleans apothecary whose bitters outlived his pharmacy.",
+        "birth_year": 1803,
+        "death_year": 1883,
+        "image_url": "https://example.test/images/antoine-peychaud.jpeg"
+    },
+    {
+        "slug": "sasha-house",
+        "name": "Sasha House",
+        "url": "/bartenders/sasha-house",
+        "description": "Works the stick at the house bar and rarely writes anything down.",
+        "birth_year": null,
+        "death_year": null,
+        "image_url": "https://example.test/images/sasha-house.jpeg"
+    }
+]
