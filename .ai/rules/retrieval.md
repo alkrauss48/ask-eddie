@@ -7,6 +7,10 @@ paths:
   - app/Services/Books/ChunkEmbedder.php
   - 'app/Services/Embedding/**'
   - 'app/Services/Retrieval/Drink*.php'
+  - app/Tools/BrowseTheMenus.php
+  - app/Tools/SearchTheHouse.php
+  - app/Agents/SashaAgent.php
+  - app/Console/Commands/BarAskCommand.php
 ---
 
 # Retrieval
@@ -80,3 +84,36 @@ also_printed_as stays corpus-wide (drinks.aliases, the extractor's receipt) unle
 DrinkCoverage::isEmpty() is rowsTallied === 0, not drinkCount === 0. A shelf whose every row the classifier set aside has still been tallied, and collapsing that into "not yet counted" undoes the three-way distinction SurveyTheBooks::handle() exists to keep.
 
 first_year is the earliest book ON THIS SHELF that prints a drink, never where it was invented; the shelf is thin before 1880. An earliest/latest survey carries that caveat in the preamble and EddieAgent's instructions repeat it.
+
+## One retriever body, two corpora
+`HybridRetriever` holds every query body; `ChunkRetriever` and `HouseRetriever` are ~20 lines each and differ only in the `CorpusProfile` they hand up (model class, config prefix, `usesApproximateIndex`).
+
+A value object, NOT an abstract base with hooks. The difference between corpora is entirely data; a `protected function denseQuery(): Builder` hook would make the query bodies overridable, and the moment a subclass can rewrite `dense()` it can drop `whereNotNull('embedding')` and nothing will notice. Keep `is_indexable` on both channels, the array passed to `whereVectorSimilarTo`, `websearch_to_tsquery` and `ts_rank_cd(…, 32)` in exactly one place.
+
+Books retrieval costs 5 queries (ef_search statement, dense, lexical, hydrate, eager-loaded book); house costs 3 (no approximate index, no relation to load). Both are pinned by tests — if one goes red, the generalization is wrong, not the test.
+
+`AiReranker` takes a `$corpus` name and interpolates it into three config reads. The `Reranker` binding is global and books-flavoured, so `HouseRetriever` gets a contextual binding in `AppServiceProvider::register()`. Without it, `BOOKS_RERANK_ENABLED=false` on Apple Silicon silently turns the house's reranking off too. `HouseRetrieverTest` asserts this through the request the cross-encoder received, not the bound class — a reranker resolved correctly and then reading the wrong knobs is the same defect.
+
+`RetrievedChunk::$chunk` is `Model&RetrievablePassage`. The intersection, not the bare interface: `$result->chunk->id` and `->citation` would otherwise be unanalyzable dynamic accesses everywhere.
+
+## The menu tool answers negation; the search only guesses at it
+`BrowseTheMenus` exists because "I don't like whiskey" is a negation and an embedding of "not whiskey" sits among the whiskey drinks. Measured on the real corpus: `--retrieval-only "something bright without whiskey"` returns Port Light, Whiskey Sour, Daiquiri. A model handed that names the Whiskey Sour. Do not merge this into `SearchTheHouse` or "simplify" it to a vector query.
+
+`CocktailSummary::payload()` is 8 keys (name, description, build, served, tags, on, notes, url), asserted by COUNT. It is a value object, following `DrinkSummary` rather than `BookChunk` — `HouseCocktail::toArray()` never reaches a prompt, which matters especially because `house_cocktails.source` holds the whole exported site record. Do not weaken the count to `toContain`, and do not start handing models to the tool.
+
+`url` goes through `HouseUrl::absolute()`. Catalog tables store the site's relative path; a payload is a citation, and a relative href is not a link a guest can open.
+
+Three distinct returns, same discipline as `SurveyTheBooks`: catalog-not-loaded, nothing-matched, unavailable. A bare `[]` reads to a model as "the house pours nothing like that".
+
+Two claims travel with every answer: the total before the limit (the denominator — "here are 3" reads as the whole list) and any facet value the house does not have. A guest asking for scotch matches nothing, and reporting that as "nothing fits" is true about the wrong thing: there is no Scotch facet and the house does pour whiskey.
+
+`MenuBrowser::lower()` quotes identifiers per segment. `house_ingredients."group"` is a reserved word — unquoted it is a syntax error, which fails through the tool's catch-all and reads as an outage rather than a bug.
+
+## Sasha may invent a build, never a name
+Sasha's hard rule is Eddie's citation rule from the other side. Eddie may invent a drink and never a source; Sasha may reason freely about flavour, technique and substitution and never *name* a cocktail the house does not pour. Both sit next to an instruction inviting the opposite, so both are stated flatly rather than left for the model to infer — "Reason freely… that is the job. But do not name a drink the house does not pour."
+
+`SashaAgentTest` pins the instruction substrings with `toContain` and the tool roster with `toEqualCanonicalizing`, exactly as `EddieAgentTest` does. When editing the heredoc, remember substrings must not span its line wraps.
+
+The negating case is named in the instructions rather than left to `BrowseTheMenus`'s tool description, because it is the one a search answers plausibly and wrongly every time.
+
+The menu-only-names rule is prompt-level, not hard — the same standing the project already accepts for Eddie's citations. A `--check-names` dev flag greping an answer for titles absent from `house_cocktails` would turn it into a measurement; that is the next move if she drifts, not a thing to assume exists.

@@ -1,0 +1,279 @@
+<?php
+
+namespace App\Services\Retrieval;
+
+use App\Models\HouseCocktail;
+use App\Models\HouseCollection;
+use App\Models\HouseIngredient;
+use App\Models\HouseTag;
+use Illuminate\Contracts\Database\Query\Expression;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * Which drinks the house pours, filtered exactly.
+ *
+ * HouseRetriever finds the passages most like a question, which is the wrong
+ * instrument for "I don't like whiskey, what else have you got". A vector
+ * answers a negation plausibly and wrongly -- an embedding of "not whiskey"
+ * sits next to the whiskey drinks -- and a model handed six near-misses will
+ * name one anyway. So this is plain SQL over the facet tables: no vector, no
+ * fusion, no reranking, and every row it returns is a drink that is genuinely
+ * on a menu.
+ *
+ * Ordering is by how many curated lists a drink appears on, then by title, then
+ * by id. A drink the house put on a menu and in a flight is one it leans on,
+ * which is a better answer to "what's good?" than whichever title sorts first;
+ * the title and the id after it are there so a repeated question gives a
+ * repeated answer.
+ */
+class MenuBrowser
+{
+    /**
+     * The drinks that fit, best first.
+     *
+     * @return Collection<int, CocktailSummary>
+     */
+    public function browse(MenuQuery $query): Collection
+    {
+        return $this->filtered($query)
+            // Three relations, eager loaded. A browse of eight drinks that
+            // reached for its ingredient lines per row would cost twenty-five
+            // queries to answer "what's good".
+            ->with(['cocktailIngredients.ingredient', 'tags', 'collections'])
+            ->withCount('collections')
+            ->orderByDesc('collections_count')
+            ->orderBy('title')
+            ->orderBy('id')
+            ->limit(max(1, $query->limit))
+            ->get()
+            ->map(CocktailSummary::fromCocktail(...))
+            ->values();
+    }
+
+    /**
+     * How many drinks fit in total, before the limit.
+     *
+     * The denominator, and it travels with the answer for the same reason
+     * DrinkCoverage's does: "here are eight" reads as the whole list unless
+     * something says there were thirty-one.
+     */
+    public function matching(MenuQuery $query): int
+    {
+        return $this->filtered($query)->count();
+    }
+
+    /**
+     * Whether the catalog has been imported at all.
+     *
+     * An empty house and a question nothing matched are different facts, and
+     * collapsing them would have Sasha tell a guest the house pours nothing.
+     */
+    public function poursAnything(): bool
+    {
+        return HouseCocktail::query()->exists();
+    }
+
+    /**
+     * The values in this question that name nothing the house has.
+     *
+     * A guest asking for scotch gets no rows, and without this the tool reports
+     * that as "nothing on the menus fits" -- a true sentence about the wrong
+     * thing, since the house has no Scotch tag at all and does pour whiskey.
+     * Naming the unrecognised value lets Sasha say which word she did not know.
+     *
+     * @return list<string>
+     */
+    public function unrecognised(MenuQuery $query): array
+    {
+        $unknown = [];
+
+        foreach ([$query->required(), $query->excluded()] as $group) {
+            foreach ($group as $category => $labels) {
+                $known = $this->labelsIn($category);
+
+                foreach ($labels as $label) {
+                    if (! in_array(mb_strtolower($label), $known, true)) {
+                        $unknown[] = $label;
+                    }
+                }
+            }
+        }
+
+        foreach ([...$query->withIngredients, ...$query->withoutIngredients] as $ingredient) {
+            if (! $this->ingredientExists($ingredient)) {
+                $unknown[] = $ingredient;
+            }
+        }
+
+        if ($query->menu !== null && ! $this->collectionExists($query->menu)) {
+            $unknown[] = $query->menu;
+        }
+
+        return array_values(array_unique($unknown));
+    }
+
+    /**
+     * Every facet the house tags along, for a tool description or an error.
+     *
+     * Read from the table rather than hard-coded, because the site owns this
+     * vocabulary: a tenth category added over there should reach Sasha without
+     * a constant being edited here.
+     *
+     * @return array<string, list<string>>
+     */
+    public function facets(): array
+    {
+        return HouseTag::query()
+            ->orderBy('category_label')
+            ->orderBy('order')
+            ->orderBy('label')
+            ->get()
+            ->groupBy('category_label')
+            ->map(fn (Collection $tags): array => $tags
+                ->map(fn (HouseTag $tag): string => $tag->label)
+                ->values()
+                ->all())
+            ->all();
+    }
+
+    /**
+     * The filtered set, without ordering, loading or a limit.
+     *
+     * Shared by browse() and matching() so the count is provably a count of the
+     * same rows: two builders kept in step by hand would drift the first time a
+     * facet was added to one of them.
+     *
+     * @return Builder<HouseCocktail>
+     */
+    private function filtered(MenuQuery $query): Builder
+    {
+        $builder = HouseCocktail::query();
+
+        // One whereHas per category, so categories are ANDed and the labels
+        // inside a category are ORed: "a gin or vodka drink that is also
+        // citrusy" is the question a guest is asking, never "a drink that is
+        // both gin and vodka".
+        foreach ($query->required() as $category => $labels) {
+            $builder->whereHas('tags', fn (Builder $tags) => $this->whereLabelIn($tags, $category, $labels));
+        }
+
+        foreach ($query->excluded() as $category => $labels) {
+            $builder->whereDoesntHave('tags', fn (Builder $tags) => $this->whereLabelIn($tags, $category, $labels));
+        }
+
+        foreach ($query->withIngredients as $ingredient) {
+            $builder->whereHas('ingredients', fn (Builder $ingredients) => $this->whereIngredientIs($ingredients, $ingredient));
+        }
+
+        foreach ($query->withoutIngredients as $ingredient) {
+            $builder->whereDoesntHave('ingredients', fn (Builder $ingredients) => $this->whereIngredientIs($ingredients, $ingredient));
+        }
+
+        if ($query->menu !== null && trim($query->menu) !== '') {
+            $builder->whereHas('collections', fn (Builder $collections) => $this->whereCollectionIs($collections, $query->menu));
+        }
+
+        return $builder;
+    }
+
+    /**
+     * @param  Builder<HouseTag>  $tags
+     * @param  list<string>  $labels
+     */
+    private function whereLabelIn(Builder $tags, string $category, array $labels): void
+    {
+        // Folded rather than matched exactly: the model writes "whiskey" as
+        // often as it writes "Whiskey", and a facet filter that is silently
+        // case-sensitive answers a real question with an empty list.
+        $tags->where('category_label', $category)
+            ->whereIn(
+                $this->lower('label'),
+                array_map(mb_strtolower(...), $labels),
+            );
+    }
+
+    /**
+     * An ingredient named by slug, by catalog title, or by the bottle on it.
+     *
+     * All three because a guest says "Smith and Cross" (the group), a menu says
+     * "Jamaican Rum" (the title), and a tool call may carry either or the slug
+     * between them.
+     *
+     * @param  Builder<HouseIngredient>  $ingredients
+     */
+    private function whereIngredientIs(Builder $ingredients, string $needle): void
+    {
+        $needle = mb_strtolower(trim($needle));
+
+        $ingredients->where(function (Builder $match) use ($needle): void {
+            foreach (['slug', 'title', 'group'] as $column) {
+                $match->orWhere($this->lower($column), $needle);
+            }
+        });
+    }
+
+    /**
+     * @param  Builder<HouseCollection>  $collections
+     */
+    private function whereCollectionIs(Builder $collections, string $needle): void
+    {
+        $needle = mb_strtolower(trim($needle));
+
+        // Menus and flights share a table on purpose, and a guest saying "off
+        // the summer menu" and one saying "from the Shaman flight" are asking
+        // the same kind of question, so neither kind is excluded here.
+        $collections->where(function (Builder $match) use ($needle): void {
+            $match->where($this->lower('house_collections.slug'), $needle)
+                ->orWhere($this->lower('house_collections.title'), $needle);
+        });
+    }
+
+    /**
+     * The labels one category holds, folded for comparison.
+     *
+     * @return list<string>
+     */
+    private function labelsIn(string $category): array
+    {
+        return HouseTag::query()
+            ->where('category_label', $category)
+            ->pluck('label')
+            ->map(fn (string $label): string => mb_strtolower($label))
+            ->values()
+            ->all();
+    }
+
+    private function ingredientExists(string $needle): bool
+    {
+        return HouseIngredient::query()
+            ->where(fn (Builder $match) => $this->whereIngredientIs($match, $needle))
+            ->exists();
+    }
+
+    private function collectionExists(string $needle): bool
+    {
+        return HouseCollection::query()
+            ->where(fn (Builder $match) => $this->whereCollectionIs($match, $needle))
+            ->exists();
+    }
+
+    /**
+     * lower(column) as an expression the query builder will not quote as a value.
+     *
+     * The identifier is quoted per segment, and that is not tidiness: the
+     * ingredient catalog has a column called "group", which is a reserved word,
+     * and an unquoted lower(group) is a syntax error rather than an empty
+     * result -- so it fails through the tool's catch-all and reads as an outage.
+     */
+    private function lower(string $column): Expression
+    {
+        $quoted = implode('.', array_map(
+            fn (string $segment): string => '"'.str_replace('"', '', $segment).'"',
+            explode('.', $column),
+        ));
+
+        return DB::raw("lower({$quoted})");
+    }
+}

@@ -5,7 +5,7 @@ namespace App\Console;
 use Symfony\Component\Console\Output\OutputInterface;
 
 /**
- * Prints a stream of text deltas as the indented block eddie:ask has always
+ * Prints a stream of text deltas as the indented block bar:ask has always
  * printed.
  *
  * The blocking version could explode() the finished answer on newlines and

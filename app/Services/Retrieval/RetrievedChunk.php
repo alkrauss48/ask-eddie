@@ -2,7 +2,7 @@
 
 namespace App\Services\Retrieval;
 
-use App\Models\BookChunk;
+use Illuminate\Database\Eloquent\Model;
 
 /**
  * A chunk with the retrieval metadata that found it.
@@ -13,8 +13,15 @@ use App\Models\BookChunk;
  * entry, or a distance aliased into the select would all leak fusion
  * bookkeeping into the language model's context, where it reads as content.
  *
- * Scores are for humans reading `eddie:ask --sources` and for the reranker.
+ * Scores are for humans reading `bar:ask --sources` and for the reranker.
  * They never reach the prompt.
+ *
+ * The chunk is typed as an intersection rather than as the bare interface. Both
+ * corpora hand their passages through here, so a concrete class would be wrong
+ * -- but `RetrievablePassage` alone would make `$result->chunk->id` and
+ * `->citation` unanalyzable dynamic accesses everywhere the property is read.
+ * The intersection keeps Eloquent's attribute access typed and still admits any
+ * corpus that can prove a passage.
  */
 readonly class RetrievedChunk
 {
@@ -22,13 +29,13 @@ readonly class RetrievedChunk
      * @param  array<string, int>  $ranks  the 1-based rank each channel gave this chunk
      */
     public function __construct(
-        public BookChunk $chunk,
+        public Model&RetrievablePassage $chunk,
         public float $score,
         public array $ranks = [],
         public ?float $rerankScore = null,
     ) {}
 
-    public static function fromFused(BookChunk $chunk, FusedChunk $fused): self
+    public static function fromFused(Model&RetrievablePassage $chunk, FusedChunk $fused): self
     {
         return new self($chunk, $fused->score, $fused->ranks);
     }

@@ -41,7 +41,10 @@ function collectStream(array $events): array
     $tools = [];
     $errors = [];
 
-    (new AnswerStream(eddieStream($events)))->each(
+    // The label map is configuration rather than a const on the stream, so
+    // that the two bartenders' tools can be named in one place. Passed here the
+    // way the command passes it.
+    (new AnswerStream(eddieStream($events), config('bar.labels')))->each(
         onText: function (string $delta) use (&$text): void {
             $text .= $delta;
         },

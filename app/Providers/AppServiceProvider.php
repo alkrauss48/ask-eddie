@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Ai\Tei\TeiRerankerProvider;
 use App\Services\Retrieval\AiReranker;
+use App\Services\Retrieval\HouseRetriever;
 use App\Services\Retrieval\NullReranker;
 use App\Services\Retrieval\Reranker;
 use Illuminate\Contracts\Events\Dispatcher;
@@ -28,9 +29,31 @@ class AppServiceProvider extends ServiceProvider
          * LogicException outright for a provider that is not a RerankingProvider,
          * which would turn a configuration typo into a crash at boot.
          */
-        $this->app->bind(Reranker::class, fn (): Reranker => config('books.retrieval.rerank.enabled')
-            ? new AiReranker
-            : new NullReranker);
+        $this->app->bind(Reranker::class, fn (): Reranker => $this->reranker('books'));
+
+        /*
+         * The house reranks on its own settings, or not at all.
+         *
+         * The binding above is global, and a HouseRetriever resolving it would
+         * be handed a reranker reading config('books.retrieval.rerank.*') --
+         * its enabled flag, its candidate ceiling, its model. On an Apple
+         * Silicon dev machine BOOKS_RERANK_ENABLED is false, so the two corpora
+         * would rerank together or not at all, which is wrong in both
+         * directions and visible in neither.
+         */
+        $this->app->when(HouseRetriever::class)
+            ->needs(Reranker::class)
+            ->give(fn (): Reranker => $this->reranker('house'));
+    }
+
+    /**
+     * The reranking mode one corpus is configured for.
+     */
+    private function reranker(string $corpus): Reranker
+    {
+        return config("{$corpus}.retrieval.rerank.enabled")
+            ? new AiReranker(corpus: $corpus)
+            : new NullReranker;
     }
 
     /**

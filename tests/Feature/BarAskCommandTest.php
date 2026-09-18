@@ -1,8 +1,10 @@
 <?php
 
 use App\Agents\EddieAgent;
+use App\Agents\SashaAgent;
 use App\Models\Book;
 use App\Models\BookChunk;
+use App\Models\HouseChunk;
 use App\Services\Retrieval\NullReranker;
 use App\Services\Retrieval\Reranker;
 use Illuminate\Support\Facades\Artisan;
@@ -43,7 +45,7 @@ function askableCorpus(): BookChunk
 it('names the book and both channels for a retrieved passage', function (): void {
     askableCorpus();
 
-    $this->artisan('eddie:ask', [
+    $this->artisan('bar:ask', [
         'question' => ['what', 'goes', 'in', 'a', 'Blue', 'Lady?'],
         '--retrieval-only' => true,
     ])
@@ -71,7 +73,7 @@ it('says out loud when a channel contributed nothing', function (): void {
         'text' => 'Something else entirely.',
     ]);
 
-    $this->artisan('eddie:ask', [
+    $this->artisan('bar:ask', [
         'question' => ['absinthe'],
         '--retrieval-only' => true,
     ])
@@ -82,7 +84,7 @@ it('says out loud when a channel contributed nothing', function (): void {
 it('fails when nothing is retrieved', function (): void {
     Embeddings::fake(fn ($prompt): array => array_map(fn (): array => unitVector(1), $prompt->inputs));
 
-    $this->artisan('eddie:ask', [
+    $this->artisan('bar:ask', [
         'question' => ['anything', 'at', 'all'],
         '--retrieval-only' => true,
     ])
@@ -95,7 +97,7 @@ it('honours an explicit limit', function (): void {
     Embeddings::fake(fn ($prompt): array => array_map(fn (): array => unitVector(1), $prompt->inputs));
     BookChunk::factory()->count(6)->for($book)->embedded(unitVector(1))->create(['text' => 'Gin.']);
 
-    $this->artisan('eddie:ask', [
+    $this->artisan('bar:ask', [
         'question' => ['gin'],
         '--retrieval-only' => true,
         '--limit' => 2,
@@ -111,7 +113,7 @@ it('honours an explicit limit', function (): void {
 it('reports a retrieval failure without a stack trace', function (): void {
     Embeddings::fake(fn (): never => throw new RuntimeException('Connection refused'));
 
-    $this->artisan('eddie:ask', [
+    $this->artisan('bar:ask', [
         'question' => ['gin'],
         '--retrieval-only' => true,
     ])
@@ -133,7 +135,7 @@ it('reports a retrieval failure without a stack trace', function (): void {
 it('writes the answer as it arrives', function (): void {
     EddieAgent::fake(["That one's out of the Savoy, friend."]);
 
-    $status = Artisan::call('eddie:ask', ['question' => ['what', 'goes', 'in', 'a', 'Blue', 'Lady?']]);
+    $status = Artisan::call('bar:ask', ['question' => ['what', 'goes', 'in', 'a', 'Blue', 'Lady?']]);
 
     expect($status)->toBe(0)
         ->and(Artisan::output())->toContain("  That one's out of the Savoy, friend.");
@@ -154,7 +156,7 @@ it('writes the answer in pieces rather than in a block', function (): void {
     // against the first expectation that accepts it, so an overlapping
     // expectsOutputToContain() would absorb the write and this would pass
     // whatever the command did.
-    $this->artisan('eddie:ask', ['question' => ['what', 'goes', 'in', 'a', 'Blue', 'Lady?']])
+    $this->artisan('bar:ask', ['question' => ['what', 'goes', 'in', 'a', 'Blue', 'Lady?']])
         ->doesntExpectOutputToContain('out of the Savoy, friend.')
         ->assertSuccessful();
 });
@@ -166,7 +168,7 @@ it('writes the answer in pieces rather than in a block', function (): void {
 it('reports a failure without a stack trace', function (): void {
     EddieAgent::fake(fn (): never => throw new RuntimeException('The provider hung up'));
 
-    $this->artisan('eddie:ask', ['question' => ['anything']])
+    $this->artisan('bar:ask', ['question' => ['anything']])
         ->expectsOutputToContain('Eddie could not answer')
         ->assertFailed();
 });
@@ -196,4 +198,129 @@ it('tells eddie to search before answering and never to invent a source', functi
         ->and($instructions)->toContain('search tool before answering')
         ->and($instructions)->toContain('Never attribute a drink')
         ->and($instructions)->toContain('Inventing a drink is part of the job');
+});
+
+/**
+ * --bartender selects the agent *and* the retriever together, and the pairing
+ * is the whole reason the registry is one row per bartender rather than two
+ * options. Sasha's --sources showing Eddie's passages would be a table of real
+ * citations from the wrong corpus, with nothing on screen to say so.
+ */
+it('retrieves from the house when sasha is asked', function (): void {
+    config(['house.retrieval.rerank.enabled' => false]);
+
+    Embeddings::fake(fn ($prompt): array => array_map(fn (): array => unitVector(1), $prompt->inputs));
+
+    HouseChunk::factory()->embedded(unitVector(1))->create([
+        'title' => 'Midnight Rambler',
+        'text' => "Midnight Rambler\n\n2oz Rye Whiskey, .5oz Blackberry Syrup.",
+        'keywords' => ['Rye Whiskey'],
+        'url' => 'https://thekrausshaus.com/cocktails/midnight-rambler',
+    ]);
+
+    // A book chunk that would win every channel if the wrong retriever ran.
+    askableCorpus();
+
+    $this->artisan('bar:ask', [
+        'question' => ['what', 'is', 'the', 'midnight', 'rambler'],
+        '--bartender' => 'sasha',
+        '--retrieval-only' => true,
+    ])
+        ->expectsOutputToContain('Midnight Rambler')
+        ->doesntExpectOutputToContain('Old Waldorf Bar Days')
+        ->assertSuccessful();
+});
+
+it('still retrieves from the books when eddie is asked', function (): void {
+    askableCorpus();
+
+    HouseChunk::factory()->embedded(unitVector(1))->create([
+        'title' => 'Midnight Rambler',
+        'text' => 'Rye, blackberry, lemon.',
+        'keywords' => [],
+    ]);
+
+    $this->artisan('bar:ask', [
+        'question' => ['what', 'goes', 'in', 'a', 'Blue', 'Lady?'],
+        '--bartender' => 'eddie',
+        '--retrieval-only' => true,
+    ])
+        ->expectsOutputToContain('Old Waldorf Bar Days')
+        ->doesntExpectOutputToContain('Midnight Rambler')
+        ->assertSuccessful();
+});
+
+/**
+ * Eddie by default, because `eddie:ask "gin fizz"` should keep working as
+ * `bar:ask "gin fizz"` with nothing else typed.
+ */
+it('pours from eddie when nobody is named', function (): void {
+    askableCorpus();
+
+    expect(config('bar.default'))->toBe('eddie');
+
+    $this->artisan('bar:ask', [
+        'question' => ['what', 'goes', 'in', 'a', 'Blue', 'Lady?'],
+        '--retrieval-only' => true,
+    ])
+        ->expectsOutputToContain('Old Waldorf Bar Days')
+        ->assertSuccessful();
+});
+
+it('says who works here when asked for somebody who does not', function (): void {
+    $this->artisan('bar:ask', [
+        'question' => ['anything'],
+        '--bartender' => 'gus',
+    ])
+        ->expectsOutputToContain('Nobody called "gus" works here')
+        ->expectsOutputToContain('eddie, sasha')
+        ->assertFailed();
+});
+
+it('names the right doctor command for the corpus that failed', function (): void {
+    Embeddings::fake(fn (): never => throw new RuntimeException('Connection refused'));
+
+    $this->artisan('bar:ask', [
+        'question' => ['rum'],
+        '--bartender' => 'sasha',
+        '--retrieval-only' => true,
+    ])
+        ->expectsOutputToContain('Retrieval failed')
+        ->expectsOutputToContain('house:status')
+        ->assertFailed();
+});
+
+it('streams sashas answer and names her when she cannot give one', function (): void {
+    SashaAgent::fake(['That one I can do — it is on the spring menu.']);
+
+    $status = Artisan::call('bar:ask', [
+        'question' => ['something', 'bright'],
+        '--bartender' => 'sasha',
+    ]);
+
+    expect($status)->toBe(0)
+        ->and(Artisan::output())->toContain('it is on the spring menu');
+
+    SashaAgent::assertPrompted('something bright');
+});
+
+it('reports sashas failure under her own name', function (): void {
+    SashaAgent::fake(fn (): never => throw new RuntimeException('The provider hung up'));
+
+    $this->artisan('bar:ask', ['question' => ['anything'], '--bartender' => 'sasha'])
+        ->expectsOutputToContain('Sasha could not answer')
+        ->assertFailed();
+});
+
+/**
+ * The tool labels moved out of AnswerStream and into configuration when the
+ * second bartender arrived. Both rosters have to be in there, or a guest sees a
+ * class name where a status line should be.
+ */
+it('has an in-character label for every tool either bartender carries', function (): void {
+    $tools = collect([...app(EddieAgent::class)->tools(), ...app(SashaAgent::class)->tools()])
+        ->map(fn (object $tool): string => class_basename($tool))
+        ->all();
+
+    expect(array_keys((array) config('bar.labels')))->toEqualCanonicalizing($tools);
 });

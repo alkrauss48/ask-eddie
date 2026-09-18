@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\HouseSourceType;
 use App\Services\House\RenderedChunk;
+use App\Services\Retrieval\RetrievablePassage;
 use Database\Factories\HouseChunkFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\AsVector;
@@ -27,7 +28,7 @@ use Illuminate\Database\Eloquent\Model;
  * offset arithmetic here, because nothing was cut: one record renders to
  * exactly one chunk.
  */
-class HouseChunk extends Model
+class HouseChunk extends Model implements RetrievablePassage
 {
     /** @use HasFactory<HouseChunkFactory> */
     use HasFactory;
