@@ -3,6 +3,8 @@
 namespace App\Console\Commands;
 
 use App\Agents\EddieAgent;
+use App\Ai\Streaming\AnswerStream;
+use App\Console\IndentedWriter;
 use App\Services\Retrieval\ChunkRetriever;
 use App\Services\Retrieval\RetrievedChunk;
 use Illuminate\Console\Command;
@@ -55,17 +57,37 @@ class AskCommand extends Command
 
         $this->newLine();
 
+        $writer = new IndentedWriter($this->output);
+
+        // A blocking prompt() failed before a word had been printed, so the
+        // error could simply be written. A stream can fail half a sentence in,
+        // which is what close() is for on this path.
         try {
-            $response = $eddie->prompt($question);
+            (new AnswerStream($eddie->stream($question)))->each(
+                onText: $writer->write(...),
+                // Both close the writer first: a tool call can land after the
+                // model has already narrated, and a status line tacked onto
+                // the end of Eddie's sentence reads as part of it.
+                onTool: function (string $label) use ($writer): void {
+                    $writer->close();
+
+                    $this->line("  <fg=gray>⋯ {$label}</>");
+                },
+                onError: function (string $message) use ($writer): void {
+                    $writer->close();
+
+                    $this->line("  <fg=yellow>{$message}</>");
+                },
+            );
         } catch (Throwable $exception) {
+            $writer->close();
+
             $this->error('Eddie could not answer: '.$exception->getMessage());
 
             return self::FAILURE;
         }
 
-        foreach (explode("\n", trim((string) $response->text)) as $line) {
-            $this->line('  '.$line);
-        }
+        $writer->close();
 
         $this->newLine();
 

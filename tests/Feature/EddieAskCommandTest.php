@@ -5,6 +5,7 @@ use App\Models\Book;
 use App\Models\BookChunk;
 use App\Services\Retrieval\NullReranker;
 use App\Services\Retrieval\Reranker;
+use Illuminate\Support\Facades\Artisan;
 use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Embeddings;
 
@@ -116,6 +117,57 @@ it('reports a retrieval failure without a stack trace', function (): void {
     ])
         ->expectsOutputToContain('Retrieval failed')
         ->expectsOutputToContain('books:doctor')
+        ->assertFailed();
+});
+
+/**
+ * Eddie's answer is written to the terminal as it arrives rather than after it
+ * is finished, which with two tool round-trips in front of it is the difference
+ * between a pause and an apparent hang.
+ *
+ * Asserted through Artisan::output() rather than expectsOutputToContain(),
+ * because that assertion is matched against a single write and a streamed
+ * sentence arrives one word per write -- which is also what proves the answer
+ * was streamed rather than printed in a block.
+ */
+it('writes the answer as it arrives', function (): void {
+    EddieAgent::fake(["That one's out of the Savoy, friend."]);
+
+    $status = Artisan::call('eddie:ask', ['question' => ['what', 'goes', 'in', 'a', 'Blue', 'Lady?']]);
+
+    expect($status)->toBe(0)
+        ->and(Artisan::output())->toContain("  That one's out of the Savoy, friend.");
+
+    EddieAgent::assertPrompted('what goes in a Blue Lady?');
+});
+
+/**
+ * The half of the previous test that Artisan::output() cannot see. Each console
+ * expectation is matched against a single write, so a sentence that reaches the
+ * buffer while no one write contains it is a sentence that was streamed --
+ * which the blocking path could not have produced.
+ */
+it('writes the answer in pieces rather than in a block', function (): void {
+    EddieAgent::fake(["That one's out of the Savoy, friend."]);
+
+    // Nothing may also expect a substring of this one: Mockery matches a write
+    // against the first expectation that accepts it, so an overlapping
+    // expectsOutputToContain() would absorb the write and this would pass
+    // whatever the command did.
+    $this->artisan('eddie:ask', ['question' => ['what', 'goes', 'in', 'a', 'Blue', 'Lady?']])
+        ->doesntExpectOutputToContain('out of the Savoy, friend.')
+        ->assertSuccessful();
+});
+
+/**
+ * A stream can fail half a sentence in, where prompt() could only fail before a
+ * word had been printed. The error must not land on the end of Eddie's.
+ */
+it('reports a failure without a stack trace', function (): void {
+    EddieAgent::fake(fn (): never => throw new RuntimeException('The provider hung up'));
+
+    $this->artisan('eddie:ask', ['question' => ['anything']])
+        ->expectsOutputToContain('Eddie could not answer')
         ->assertFailed();
 });
 

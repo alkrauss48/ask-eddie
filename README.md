@@ -465,6 +465,17 @@ sail artisan eddie:ask "what goes in a Blue Lady?" --sources
 sail artisan eddie:ask "a bitter gin drink with orange" --sources
 ```
 
+Eddie's answer streams: it is written to the terminal as the model produces it, and a dim
+`⋯ reaching for the books` marks each tool call while it runs. With a hybrid search and a
+cross-encoder in front of the model, waiting for a finished answer before printing anything
+is a long enough silence to read as a hang.
+
+`AnswerStream` is the one place that decides which stream events a guest may see. It passes
+on text and a name for the tool being used, and drops `ToolResult` — whose payload is the
+whole eight-key passage JSON, which belongs in the model's context and nowhere else. A JSON
+API will consume the same stream with a different sink; that decision is not one it should
+make again.
+
 `books:embed` is resumable. A vector belongs to exactly one chunk and is written by an
 id-keyed update, and each batch commits in its own transaction rather than the run holding
 one open — so interrupting it costs one batch, and re-running picks up only what still needs
@@ -573,7 +584,7 @@ difference from using Cohere is the name in configuration.
 | Command | What it does |
 | --- | --- |
 | `books:embed` | Embeds indexable chunks. `--book=slug` (repeatable), `--force`, `--batch=`, `--dry-run`, `--verify`. Resumable; holds a cache lock. |
-| `eddie:ask` | Asks Eddie a question. `--sources` shows both channel ranks and the fused score, `--retrieval-only` stops before the language model, `--limit=`. |
+| `eddie:ask` | Asks Eddie a question, streaming the answer as it is written. `--sources` shows both channel ranks and the fused score, `--retrieval-only` stops before the language model, `--limit=`. |
 
 ### Configuration
 
