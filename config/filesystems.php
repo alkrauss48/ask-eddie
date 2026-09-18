@@ -54,6 +54,19 @@ return [
             'report' => false,
         ],
 
+        'house' => [
+            'driver' => 'local',
+            // The JSON export from the-krauss-haus, produced there by
+            // `npm run export:data` and committed to that repository. Unlike
+            // the books disk, whose default sits under the project's own bind
+            // mount, this one is outside the project entirely -- compose.yaml
+            // mounts the sibling checkout read-only at the path below, which is
+            // why the default is a container path rather than a host one.
+            'root' => env('HOUSE_PATH', '/var/www/house-data'),
+            'throw' => true,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

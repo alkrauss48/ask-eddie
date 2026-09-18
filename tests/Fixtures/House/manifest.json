@@ -1,0 +1,14 @@
+{
+    "generated_at": "2026-09-18T00:00:00.000Z",
+    "counts": {
+        "cocktails": 3,
+        "ingredients": 5,
+        "recipes": 1,
+        "bartenders": 2,
+        "paths": 1,
+        "tag_categories": 4,
+        "tags": 10,
+        "menus": 1
+    },
+    "checksum": "e0d2b9faa3984632a35c7c18f1d053773eb9fe39d34de512943b6a210f7130b2"
+}

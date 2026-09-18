@@ -1,12 +1,17 @@
 <?php
 
-namespace App\Services\Books;
+namespace App\Services\Embedding;
 
 /**
- * What one book's embedding pass did, in the shape of ChunkingReport.
+ * What one embedding pass did, in the shape of ChunkingReport.
  *
  * Kept separate from the command for the same reason: the numbers are
  * assertions the run is judged on, not decoration for a table.
+ *
+ * Shared by both corpora. The pass it describes is a book for books:embed and
+ * the whole house for house:embed, which is the only difference -- the
+ * questions asked of it (did everything pending get a vector, and how fast) are
+ * the same either way.
  */
 class EmbeddingReport
 {
@@ -22,9 +27,11 @@ class EmbeddingReport
     /**
      * Chunks embedded per second, which is the number to extrapolate from.
      *
-     * The corpus is 24,926 indexable chunks and the initial bulk embed runs on
-     * CPU, so this is what tells you whether a full run is an hour or a day
-     * before you commit to finding out.
+     * The book corpus is 24,926 indexable chunks and its initial bulk embed
+     * runs on CPU, so this is what tells you whether a full run is an hour or a
+     * day before you commit to finding out. The house's 207 do not need the
+     * warning, but they are embedded by the same emulated container and it
+     * costs nothing to report.
      */
     public function rate(): float
     {

@@ -1,0 +1,14 @@
+[
+    {
+        "slug": "the-ramble",
+        "title": "The Ramble",
+        "subtitle": "Bright, then dark.",
+        "description": "Opens herbal and green, and ends somewhere warmer.",
+        "url": "/paths/the-ramble",
+        "image_url": "https://example.test/images/the-ramble.jpeg",
+        "cocktail_slugs": [
+            "gin-basil-smash",
+            "midnight-rambler"
+        ]
+    }
+]

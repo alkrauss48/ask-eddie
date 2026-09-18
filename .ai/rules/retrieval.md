@@ -5,6 +5,7 @@ paths:
   - app/Tools/SearchTheBooks.php
   - app/Agents/EddieAgent.php
   - app/Services/Books/ChunkEmbedder.php
+  - 'app/Services/Embedding/**'
   - 'app/Services/Retrieval/Drink*.php'
 ---
 

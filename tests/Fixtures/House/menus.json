@@ -1,0 +1,25 @@
+[
+    {
+        "slug": "spring",
+        "title": "Spring Menu",
+        "subtitle": "What the house is pouring now",
+        "url": "/menu/spring",
+        "sections": [
+            {
+                "title": "Bright",
+                "cocktail_slugs": [
+                    "gin-basil-smash"
+                ]
+            },
+            {
+                "title": "Dark",
+                "cocktail_slugs": [
+                    "midnight-rambler"
+                ]
+            }
+        ],
+        "featured_slugs": [
+            "midnight-rambler"
+        ]
+    }
+]

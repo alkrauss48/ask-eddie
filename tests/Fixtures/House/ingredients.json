@@ -1,0 +1,52 @@
+[
+    {
+        "slug": "blackberry-syrup",
+        "title": "Blackberry Syrup",
+        "url": "/ingredients",
+        "group": null,
+        "category": "Syrups",
+        "subcategory": "Fruit & Citrus",
+        "type": "Non-Alcoholic",
+        "recipe_slug": "blackberry-syrup"
+    },
+    {
+        "slug": "lemon-garnish",
+        "title": "Lemon Garnish",
+        "url": "/ingredients",
+        "group": null,
+        "category": "Other",
+        "subcategory": "Garnish",
+        "type": "Non-Alcoholic",
+        "recipe_slug": null
+    },
+    {
+        "slug": "rye-whiskey",
+        "title": "Rye Whiskey",
+        "url": "/ingredients",
+        "group": "Rye Whiskey",
+        "category": "Base Spirits",
+        "subcategory": "Whiskey",
+        "type": "Alcoholic",
+        "recipe_slug": null
+    },
+    {
+        "slug": "smith-and-cross",
+        "title": "Smith and Cross",
+        "url": "/ingredients",
+        "group": "Jamaican Rum",
+        "category": "Base Spirits",
+        "subcategory": "Rum",
+        "type": "Alcoholic",
+        "recipe_slug": null
+    },
+    {
+        "slug": "tanqueray",
+        "title": "Tanqueray",
+        "url": "/ingredients",
+        "group": "London Dry Gin",
+        "category": "Base Spirits",
+        "subcategory": "Gin",
+        "type": "Alcoholic",
+        "recipe_slug": null
+    }
+]
