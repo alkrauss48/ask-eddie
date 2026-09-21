@@ -8,6 +8,7 @@ paths:
   - app/Agents/EddieAgent.php
   - app/Agents/SashaAgent.php
   - app/Console/Commands/BarAskCommand.php
+  - config/ai.php
 ---
 
 # The bar, and the consult
@@ -56,3 +57,33 @@ The consult is the one path by which a drink name can enter Sasha's mouth withou
 `ToolResult` stream events are emitted by `TextGenerationLoop`, not by the gateway. So `EddieAgent::fake([new ToolCall('c1', 'AskSasha', [...]), 'final text'])` with `SashaAgent::fake([...])` behind it causes the **real** tool to execute through the **real** desk and a **real** `ToolResult` to flow through `AnswerStream` into the terminal rendering. Nothing between the two bartenders is stubbed. Keep it in `BarAskCommandTest`.
 
 Do not write a test that actually recurses to prove the depth guard: with the guard removed it would hang rather than fail. `ConsultationTest` asserts through the desk instead.
+
+---
+
+# The tab
+
+A `bar:ask` run is a process, so "the same conversation" is a decision, not something the runtime knows. `App\Ai\Bar\TabKeeper` makes it: one conversation per `(tab name, bartender)`, resumed while `config('bar.tabs.idle')` minutes have not elapsed since the last turn. `BAR_TAB_IDLE=0` turns memory off and restores the stateless run exactly, the same shape as `BAR_CONSULT_LIMIT=0`.
+
+## The trait and the contract are both load-bearing
+An agent needs `use Laravel\Ai\Concerns\RemembersConversations` **and** `implements Laravel\Ai\Contracts\RemembersConversations`. `GeneratesText::gatherMiddlewareFor()` looks for the **trait**, by FQCN through `class_uses_recursive`, to decide whether to persist. `StreamsText`/`GeneratesText` check `$agent instanceof Conversational` to decide whether to read `messages()` back. Keep the trait and drop the contract and every turn is written down and never read again — a feature that looks like it works until a guest follows up. `EddieAgentTest`/`SashaAgentTest` pin both halves. In `App\Agents\*` the concern is imported as `KeepsATab` only because the two share a short name; `class_uses` still reports the real FQCN.
+
+## One tab per bartender, never one between them
+`getLatestConversationMessages()` filters on `conversation_id` alone, and hydration rebuilds a stored assistant row as a plain `AssistantMessage` with nothing on it saying who said it. A shared tab therefore hands Sasha Eddie's book-cited drinks as *her own prior words* — worse than the consult, because the consult at least arrives attributed. This is the invariant `.ai/rules/bar.md` protects; do not merge the tabs.
+
+## The consult is tabless by construction, not by a flag
+`Bartenders::ask()` takes no conversation id and resolves a fresh agent, so `shouldRemember()` is false and `messages()` is empty: a consulted bartender reads nothing and writes nothing. That is what `Consultation::schema()` promises the model in as many words — *"they cannot hear the conversation you are having"*. Do not add a `$conversationId` parameter to `ask()` to match `stream()`; the asymmetry is the feature, and `BarTabTest` pins it.
+
+## TabKeeper creates the conversation row itself, for two reasons
+`RememberConversation::shouldRemember()` persists only when the agent has a participant **or** an existing conversation id. This app has no users, so leaving creation to the middleware would silently drop the first turn of every tab. And the middleware titles a conversation it opens with an extra call to the provider's `cheapestTextModel()` — a model nobody in `config/bar.php` chose, billed per tab, and in tests it eats a queued `Agent::fake()` response because faking swaps the gateway and leaves the provider real. Handing it an id means that call never fires. `config('ai.conversations.generate_title')` is `false` as well, as belt and braces.
+
+## participant_type holds a legible tab key, not a morph class
+`tab:bar:eddie`, with `participant_id` null. Both columns are nullable in the store's own signature, there are no users, and the `(participant_type, participant_id, updated_at)` index is exactly the tab lookup. Nothing resolves `Conversation::participant()`.
+
+## The row cap exists because tool results replay
+`maxConversationMessages()` is overridden on both agents to `config('bar.tabs.messages')` (12) against the package's default of 100. An assistant row carries its `tool_results` and hydration replays them, so every earlier turn puts its retrieval payload back in front of the model. Truncation is safe: `getLatestConversationMessages()` ends with `skipWhile(ToolResultMessage)`, so a window cannot open on a result whose call fell off the back.
+
+## ConsultDesk::reset() stays per invocation
+The consult limit is per *answer*. One `bar:ask` is still one answer, even when the tab spans ten of them.
+
+## BarAskCommand::asked(), not question()
+`Illuminate\Console\Command::question()` already exists and is public; a private override is a fatal error.

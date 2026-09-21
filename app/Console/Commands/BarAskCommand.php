@@ -4,6 +4,8 @@ namespace App\Console\Commands;
 
 use App\Ai\Bar\Bartenders;
 use App\Ai\Bar\ConsultDesk;
+use App\Ai\Bar\Tab;
+use App\Ai\Bar\TabKeeper;
 use App\Ai\Streaming\AnswerStream;
 use App\Console\IndentedWriter;
 use App\Services\Retrieval\HybridRetriever;
@@ -31,19 +33,30 @@ use Throwable;
  * A consult renders inline, indented under the name of whoever said it. That is
  * the only tool result a guest ever sees, and AnswerStream decides which ones
  * qualify -- this class only decides what the block looks like.
+ *
+ * Every run is its own process, so "the same conversation" is not something
+ * the runtime can hand us -- it is a decision, and it is a bar's. The guest
+ * has a tab; it stays open while they keep asking and closes after they have
+ * been away a while. TabKeeper owns that judgement, this class only names the
+ * tab and hands the id on. Nothing about it is printed: a bartender who
+ * remembers should just remember, and a line saying so would break the
+ * illusion the rest of this application is built to hold. The id goes out
+ * under -v instead, where a guest will never be.
  */
 class BarAskCommand extends Command
 {
     protected $signature = 'bar:ask
         {question* : What to ask}
         {--bartender= : Who to ask — eddie or sasha}
+        {--tab= : Which tab to put this on}
+        {--new : Start a fresh tab rather than picking up where you left off}
         {--sources : Show the retrieved passages, their channel ranks and their fused scores}
         {--retrieval-only : Retrieve and stop, without asking the language model}
         {--limit= : How many passages to retrieve}';
 
     protected $description = 'Ask a bartender a question, grounded in their own corpus';
 
-    public function handle(Bartenders $bartenders): int
+    public function handle(Bartenders $bartenders, TabKeeper $tabs): int
     {
         $key = (string) ($this->option('bartender') ?: config('bar.default'));
 
@@ -64,7 +77,18 @@ class BarAskCommand extends Command
             }
         }
 
-        return $this->answer($key, $bartenders);
+        return $this->answer($key, $bartenders, $tabs);
+    }
+
+    /**
+     * What the guest actually asked, as one string.
+     *
+     * Named "asked" rather than "question": Command::question() already
+     * exists and is public, and overriding it privately is a fatal error.
+     */
+    private function asked(): string
+    {
+        return implode(' ', (array) $this->argument('question'));
     }
 
     /**
@@ -81,7 +105,7 @@ class BarAskCommand extends Command
         $limit = $this->option('limit') === null ? null : max(1, (int) $this->option('limit'));
 
         try {
-            $results = $retriever->retrieve(implode(' ', (array) $this->argument('question')), $limit);
+            $results = $retriever->retrieve($this->asked(), $limit);
         } catch (Throwable $exception) {
             $this->newLine();
             $this->error('Retrieval failed: '.$exception->getMessage());
@@ -100,13 +124,28 @@ class BarAskCommand extends Command
     }
 
     /**
-     * Stream the bartender's answer to the terminal.
+     * Stream the bartender's answer to the terminal, on the guest's tab.
      */
-    private function answer(string $key, Bartenders $bartenders): int
+    private function answer(string $key, Bartenders $bartenders, TabKeeper $tabs): int
     {
         $this->newLine();
 
         $writer = new IndentedWriter($this->output);
+
+        // One tab per bartender, never one between them: laravel/ai replays a
+        // stored assistant turn as the current agent's own prior words, so a
+        // shared tab would put Eddie's cited drinks in Sasha's memory as hers.
+        $tab = new Tab((string) ($this->option('tab') ?: config('bar.tabs.default')), $key);
+
+        $question = $this->asked();
+
+        $conversation = $this->option('new')
+            ? $tabs->start($tab, $question)
+            : $tabs->resume($tab, $question);
+
+        if ($conversation !== null && $this->output->isVerbose()) {
+            $this->line("  <fg=gray>{$tab->key()} · {$conversation}</>");
+        }
 
         // One answer, one allowance of consults. A CLI run is a process and a
         // process is an answer, but the desk is a singleton and the JSON API
@@ -121,7 +160,7 @@ class BarAskCommand extends Command
             // The registry threads provider and model, so they are named in one
             // place whether a bartender is answering a guest or answering the
             // other bartender.
-            $stream = $bartenders->stream($key, implode(' ', (array) $this->argument('question')));
+            $stream = $bartenders->stream($key, $question, $conversation);
 
             (new AnswerStream($stream, (array) config('bar.labels')))->each(
                 onText: $writer->write(...),

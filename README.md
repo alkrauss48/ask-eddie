@@ -26,6 +26,9 @@ Getting there takes two halves:
 7. **Let them talk to each other.** Either bartender can call the other over mid-answer, and
    the guest sees the reply attributed rather than absorbed — see
    [Step 7: the consult](#step-7-the-consult).
+8. **Give the guest a tab.** Each bartender remembers the conversation across runs, keeps
+   their own tab, and closes it once the guest has been gone a while — see
+   [Step 8: the tab](#step-8-the-tab).
 
 ---
 
@@ -1466,6 +1469,167 @@ sail artisan bar:ask --bartender=sasha "where does the negroni actually come fro
 ```
 
 The consult should render inline, attributed, and exactly once.
+
+---
+
+## Step 8: the tab
+
+A `bar:ask` run is a process. It asks one question, prints one answer and exits, which means
+"make it lighter" has never been a sentence anybody could say at this bar. Step 8 gives the
+guest a tab.
+
+```
+  guest ──► bar:ask "make it lighter"
+              │
+              ├─ TabKeeper ─── is a tab open for (bar, eddie), within BAR_TAB_IDLE?
+              │                  │ yes ──► that conversation id
+              │                  │ no  ──► storeConversation(), titled with the question
+              │                  ▼
+              └─ Bartenders::stream($key, $question, $conversation)
+                       │
+                       └─ EddieAgent->continue($id)->stream(…)
+                                │
+                                ├─ StreamsText ──── messages() ─► the tab, read back in
+                                └─ RememberConversation ─► both turns, written after the stream
+```
+
+Nothing is typed and nothing is printed. Ask, then ask again, and he remembers.
+
+### laravel/ai already has all of this, and the migration was already here
+
+`Laravel\Ai\Concerns\RemembersConversations` persists and resumes conversations against two
+tables the package ships a migration for — and that migration was published into this app on
+the day it was scaffolded, ran, and then sat empty for seven steps. So the code in this step is
+small. What is not small is the decision the package has no opinion about: **what "the same
+conversation" means for a command that exits between turns.**
+
+It is a bar, so the answer is a tab. It stays open while the guest keeps drinking and closes
+once they have been gone a while. `BAR_TAB_IDLE` is how long a while is.
+
+### Two halves, and dropping either one is a feature that looks like it works
+
+```php
+class EddieAgent implements Agent, HasTools, RemembersConversations
+{
+    use KeepsATab, Promptable;
+```
+
+Those are two different `RemembersConversations`, which is why one is aliased. The **trait** is
+what `GeneratesText::gatherMiddlewareFor()` looks for — by FQCN, through `class_uses_recursive`
+— to decide whether to attach the middleware that writes a turn down. The **contract** extends
+`Conversational`, which is what `StreamsText` checks before it will call `messages()` and read
+anything back.
+
+Add the trait alone and every exchange is dutifully stored and never looked at again. There is
+no error, no warning, and a full set of rows in the database to reassure you. `EddieAgentTest`
+and `SashaAgentTest` pin both halves for that reason.
+
+### One tab each, and this is the same invariant as the consult
+
+Step 7's hardest constraint was that a drink Sasha names must not enter Eddie's mouth as
+something out of his books. A shared tab breaks that more thoroughly than the consult ever
+could.
+
+`getLatestConversationMessages()` filters on `conversation_id` and nothing else, and hydration
+rebuilds a stored assistant row as a plain `AssistantMessage` — the `agent` column is written
+but never read back. So a conversation shared between the two bartenders would hand Sasha
+Eddie's cited drinks as **her own prior words**, with no attribution anywhere for the
+instructions to work on. The consult at least arrives labelled; this would not.
+
+So the tab key is `(name, bartender)`, and `tab:bar:eddie` and `tab:bar:sasha` are two
+different tabs at the same bar.
+
+### The consulted bartender is not on the tab, and that needed no code
+
+`Bartenders::ask()` — the consult path — takes no conversation id and resolves a fresh agent,
+so `shouldRemember()` is false and `messages()` is empty. She reads nothing, and nothing of
+hers is written down. That is exactly what `Consultation::schema()` has told the model since
+Step 7:
+
+> Write it so it stands on its own — they cannot hear the conversation you are having.
+
+The asymmetry between `ask()` and `stream()` is the feature, not an oversight, and `BarTabTest`
+pins it by running the real consult and asserting no row carries `SashaAgent::class`.
+
+### The conversation row is created here rather than by the middleware
+
+`RememberConversation::shouldRemember()` persists a turn only when the agent has a participant
+or already has a conversation id. This application has no users and never has, so left to
+itself the middleware would answer the first question of every tab and then drop it — memory
+appearing to switch on from the second question onward.
+
+Creating the row up front fixes that and buys a second thing. The middleware names a
+conversation it opens by calling the provider's `cheapestTextModel()` — an extra request, on a
+model nobody in `config/bar.php` chose, billed once per tab. That is the same silent-provider
+failure that disqualified `AgentTool` in Step 7, and in the test suite it also eats a queued
+`EddieAgent::fake()` response, because faking swaps the gateway and leaves the provider real.
+Handing the middleware an id means the call never happens. The tab is titled with what the
+guest actually said, which is a better name for it anyway.
+
+`config('ai.conversations.generate_title')` is `false` as well — belt and braces, for whatever
+opens a conversation next.
+
+### `participant_type` holds a tab, not a morph class
+
+```
+ participant_type  |          title           |     updated_at
+-------------------+--------------------------+---------------------
+ tab:bar:eddie     | what goes in a sazerac?  | 2026-09-21 15:36:37
+ tab:bar:sasha     | something bright, no whi…| 2026-09-21 15:36:58
+```
+
+Both participant columns are nullable in the store's own signature, there are no users here to
+own a conversation, and the table is already indexed on `(participant_type, participant_id,
+updated_at)` — which is precisely the lookup a tab needs. So the column holds a legible key and
+`participant_id` stays null. Nothing resolves `Conversation::participant()`. If this ever grows
+real users, that string is what makes the migration greppable.
+
+### Twelve rows, not a hundred, because tool results replay
+
+`maxConversationMessages()` defaults to 100 in the package. An assistant row stores its
+`tool_results`, and hydration replays them, so **every earlier turn puts its retrieval payload
+back in front of the model** — up to fifteen eight-key passages for one of Eddie's searches.
+A hundred rows of that is a bill, not a memory.
+
+The cap is on rows because rows are what the store counts, and truncating on one is safe:
+`getLatestConversationMessages()` ends with `skipWhile(ToolResultMessage)`, so a window can
+never open on a result whose call fell off the back.
+
+This is also the real cost of the step. `#[MaxSteps(8)]` bounds a step loop, not a context —
+if answers start getting expensive, `BAR_TAB_MESSAGES` is the first number to look at.
+
+### One thing worth watching
+
+Eddie's rule is that a book and a page he did not get from a tool **he just ran** does not get
+said. With a tab, a passage fetched three turns ago is still in context, and it is still a real
+passage — so the rule still holds and the instructions are unchanged. The failure to watch for
+is the drift version: an old page number attaching itself to a new drink several turns later.
+Nothing here guards against that today. Naming it is the point of this paragraph.
+
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BAR_TAB` | `bar` | The tab a guest is on when they don't name one. |
+| `BAR_TAB_IDLE` | `120` | Minutes of quiet before the tab closes. `0` turns memory off entirely. |
+| `BAR_TAB_MESSAGES` | `12` | Stored rows read back into context — six exchanges. |
+
+### Running it
+
+```bash
+sail artisan bar:ask "what goes in a sazerac?"
+sail artisan bar:ask "make it lighter"
+```
+
+The second answer should be a lighter Sazerac rather than a question about what "it" is. Then:
+
+```bash
+sail artisan bar:ask --new "make it lighter"        # a fresh tab, and he has no idea
+sail artisan bar:ask --bartender=sasha "something bright, no whiskey"
+sail artisan bar:ask -v "and something with rye"    # -v prints the tab and its conversation id
+```
+
+Sasha's answer opens a second tab. She has not heard a word of Eddie's.
 
 ---
 

@@ -4,6 +4,7 @@ namespace App\Ai\Bar;
 
 use InvalidArgumentException;
 use Laravel\Ai\Contracts\Agent;
+use Laravel\Ai\Contracts\RemembersConversations;
 use Laravel\Ai\Responses\StreamableAgentResponse;
 
 /**
@@ -33,6 +34,15 @@ final class Bartenders
      * Blocking rather than streamed: a consult's result reaches the guest
      * through the parent's stream as one finished utterance, and there is
      * nothing to interleave it with.
+     *
+     * And deliberately tabless. This is the consult path, and it takes no
+     * conversation id on purpose: the agent resolved here is a fresh instance
+     * with none set, so laravel/ai neither reads history into it nor writes
+     * this exchange down. That is what Consultation::schema() promises the
+     * model in as many words -- "they cannot hear the conversation you are
+     * having" -- and it is the only reason a drink Sasha names cannot arrive
+     * in Eddie's memory as something Eddie said. Do not add a $conversationId
+     * parameter here to match stream(); the asymmetry is the feature.
      */
     public function ask(string $key, string $question): string
     {
@@ -46,13 +56,23 @@ final class Bartenders
     }
 
     /**
-     * Stream a bartender's answer.
+     * Stream a bartender's answer, on the guest's tab when there is one.
+     *
+     * A null id is the stateless run this method used to be, and is what
+     * BAR_TAB_IDLE=0 produces -- so turning tabs off costs nothing here and
+     * changes nothing anywhere else.
      */
-    public function stream(string $key, string $question): StreamableAgentResponse
+    public function stream(string $key, string $question, ?string $conversationId = null): StreamableAgentResponse
     {
         $profile = $this->profile($key);
 
-        return $this->agent($key)->stream(
+        $agent = $this->agent($key);
+
+        if ($conversationId !== null && $agent instanceof RemembersConversations) {
+            $agent->continue($conversationId);
+        }
+
+        return $agent->stream(
             $question,
             provider: $profile['provider'],
             model: $profile['model'],
