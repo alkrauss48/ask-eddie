@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\BartendersController;
+use App\Http\Controllers\SearchController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -22,4 +23,8 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware('bar.key')->group(function (): void {
     Route::get('/bartenders', BartendersController::class)->name('api.bartenders');
+
+    // Debug-only: also gated on config('app.debug') inside the controller,
+    // which answers 404 rather than the bar's usual 401 when debug is off.
+    Route::post('/search', SearchController::class)->name('api.search');
 });
