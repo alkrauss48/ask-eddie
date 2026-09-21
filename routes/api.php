@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\BarAskController;
 use App\Http\Controllers\BartendersController;
 use App\Http\Controllers\SearchController;
 use Illuminate\Support\Facades\Route;
@@ -23,6 +24,18 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware('bar.key')->group(function (): void {
     Route::get('/bartenders', BartendersController::class)->name('api.bartenders');
+
+    // POST because it spends money and opens a conversation, and because the
+    // question belongs in a body rather than in a query string that is written
+    // to every access log between here and the caller.
+    //
+    // throttle:bar-ask is the cap on how often, not the lock on the door --
+    // that is bar.key, above, and it runs first. The limiter is registered in
+    // AppServiceProvider::boot() rather than a RouteServiceProvider, which this
+    // application does not have.
+    Route::post('/ask', BarAskController::class)
+        ->middleware('throttle:bar-ask')
+        ->name('api.ask');
 
     // Debug-only: also gated on config('app.debug') inside the controller,
     // which answers 404 rather than the bar's usual 401 when debug is off.
