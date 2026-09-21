@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Ai\Bar\ConsultDesk;
 use App\Ai\Tei\TeiRerankerProvider;
 use App\Services\Retrieval\AiReranker;
 use App\Services\Retrieval\HouseRetriever;
@@ -18,6 +19,17 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        /*
+         * One desk, or no guard at all.
+         *
+         * The depth flag and the per-answer count are state, and state shared
+         * between two tools that never see each other only works if they are
+         * handed the same object. A fresh ConsultDesk per injection would let
+         * Eddie's AskSasha and Sasha's AskEddie each believe nothing was open,
+         * which is exactly the recursion the class exists to stop.
+         */
+        $this->app->singleton(ConsultDesk::class);
+
         /*
          * Reranking is a mode, not a dependency.
          *

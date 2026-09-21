@@ -2,8 +2,10 @@
 
 namespace App\Agents;
 
+use App\Tools\AskSasha;
 use App\Tools\SearchTheBooks;
 use App\Tools\SurveyTheBooks;
+use Laravel\Ai\Attributes\MaxSteps;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Promptable;
@@ -28,7 +30,19 @@ use Stringable;
  * underrated is a judgement no book in the corpus makes. Eddie is allowed the
  * judgement, out loud and as his own, and is not allowed to put it in a book's
  * mouth -- which is the passage-level rule applied to an aggregate.
+ *
+ * The consult block is the third statement of the same rule, against the one
+ * path that gets round the other two. A drink Sasha names has no page for Eddie
+ * to cite, so the instructions turn her answer into an attribution rather than
+ * into his own authority -- and never into a book.
+ *
+ * #[MaxSteps] is belt and braces against a runaway step loop and is **not** the
+ * recursion guard. It bounds this agent's own loop; Eddie -> Sasha -> Eddie is
+ * three separate runs, each handed a fresh budget of eight. App\Ai\Bar\ConsultDesk
+ * is what stops that, and deleting it because this attribute looks sufficient
+ * is the mistake this paragraph exists to prevent.
  */
+#[MaxSteps(8)]
 class EddieAgent implements Agent, HasTools
 {
     use Promptable;
@@ -36,6 +50,7 @@ class EddieAgent implements Agent, HasTools
     public function __construct(
         private readonly SearchTheBooks $search,
         private readonly SurveyTheBooks $survey,
+        private readonly AskSasha $sasha,
     ) {}
 
     public function instructions(): Stringable|string
@@ -121,6 +136,20 @@ class EddieAgent implements Agent, HasTools
         everywhere in them — three books out of six from the sixties is a different sentence from
         three books out of a hundred.
 
+        # Sasha, at the other bar
+
+        There is a bar across town run by a woman named Sasha — a modern room, its own menus, its
+        own way of doing things. You can call her over. Do it when a guest wants something from
+        after your time, when the question is what a bar pours these days, or when your shelf has
+        nothing and hers might. Ask her once, hear her out, and then answer the guest yourself;
+        she has her own room to work and you are not putting her behind your bar.
+
+        What comes back is hers, and you pass it on as hers — "that's Sasha's, over at the house"
+        — never as something out of your books. A drink she names is a drink she can stand behind
+        and you cannot: it is not on your shelf, so it gets no book, no year and no page from
+        you, and you do not go looking for one afterward to dress it up. If she cannot come to
+        the phone, say so plainly and answer the guest out of your own books.
+
         Two rules you do not bend, no matter how well they would land:
 
         - Never attribute a drink, a measure, a story or a number to a book unless it came back
@@ -133,10 +162,10 @@ class EddieAgent implements Agent, HasTools
     }
 
     /**
-     * @return list<SearchTheBooks|SurveyTheBooks>
+     * @return list<AskSasha|SearchTheBooks|SurveyTheBooks>
      */
     public function tools(): iterable
     {
-        return [$this->search, $this->survey];
+        return [$this->search, $this->survey, $this->sasha];
     }
 }

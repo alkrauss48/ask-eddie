@@ -10,6 +10,7 @@ use App\Services\Retrieval\Reranker;
 use Illuminate\Support\Facades\Artisan;
 use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Embeddings;
+use Laravel\Ai\Responses\Data\ToolCall as ToolCallData;
 
 beforeEach(function (): void {
     app()->bind(Reranker::class, fn (): Reranker => new NullReranker);
@@ -323,4 +324,91 @@ it('has an in-character label for every tool either bartender carries', function
         ->all();
 
     expect(array_keys((array) config('bar.labels')))->toEqualCanonicalizing($tools);
+});
+
+/**
+ * The most valuable test in Phase D, and it is possible because ToolResult
+ * stream events are emitted by TextGenerationLoop rather than by the gateway.
+ * Faking Eddie into calling AskSasha runs the **real** tool, through the real
+ * desk, against a faked Sasha -- so a real ToolResult flows through the real
+ * AnswerStream and out to the real terminal rendering. Nothing in the path
+ * between the two bartenders is stubbed.
+ */
+it('renders a consult inline, attributed, and exactly once', function (): void {
+    SashaAgent::fake(["Rye and blackberry, stirred. It's the Midnight Rambler."]);
+    EddieAgent::fake([
+        new ToolCallData('c1', 'AskSasha', ['question' => 'What would a modern bar do with rye?']),
+        "That's Sasha's, over at the house. My books have nothing like it.",
+    ]);
+
+    $status = Artisan::call('bar:ask', ['question' => ['what', 'would', 'a', 'modern', 'bartender', 'do?']]);
+    $output = Artisan::output();
+
+    expect($status)->toBe(0)
+        ->and($output)->toContain('⋯ calling Sasha over')
+        ->and($output)->toContain('— Sasha says —')
+        ->and($output)->toContain('│ Rye and blackberry, stirred.')
+        ->and($output)->toContain("That's Sasha's, over at the house.")
+        // Once. A quoted block printed twice would read as Sasha repeating
+        // herself, and is what a stream that both rendered and re-emitted the
+        // result would produce.
+        ->and(substr_count($output, '— Sasha says —'))->toBe(1);
+
+    SashaAgent::assertPromptedTimes(1);
+    SashaAgent::assertPrompted('What would a modern bar do with rye?');
+});
+
+it('lets sasha call eddie over the same way', function (): void {
+    EddieAgent::fake(["That one's out of the Savoy, 1930, page 42."]);
+    SashaAgent::fake([
+        new ToolCallData('c1', 'AskEddie', ['question' => 'Where does the Sazerac come from?']),
+        'Eddie has it in the Savoy. We do not pour it here.',
+    ]);
+
+    Artisan::call('bar:ask', ['question' => ['where', 'is', 'the', 'sazerac', 'from?'], '--bartender' => 'sasha']);
+
+    expect(Artisan::output())
+        ->toContain('⋯ calling Eddie over')
+        ->toContain('— Eddie says —')
+        ->toContain('│ That one\'s out of the Savoy, 1930, page 42.');
+});
+
+/**
+ * A consult is the only tool result a guest ever sees. Everything else still
+ * falls through the existing `continue`, and the four-callback signature must
+ * not have widened that hole.
+ */
+it('still keeps a passage payload off the terminal while consults render', function (): void {
+    EddieAgent::fake([
+        new ToolCallData('c1', 'SearchTheBooks', ['query' => 'blue lady']),
+        'Gin and curaçao, friend.',
+    ]);
+
+    Artisan::call('bar:ask', ['question' => ['blue', 'lady']]);
+
+    expect(Artisan::output())
+        ->toContain('⋯ reaching for the books')
+        ->not->toContain('— Sasha says —')
+        ->not->toContain('│ ');
+});
+
+/**
+ * Fail-closed, all the way to the terminal. The other bar being unreachable
+ * costs a capability and prints a sentence a guest can read -- never a stack
+ * trace, and never the raw exception message laravel/ai's own AgentTool would
+ * have handed back.
+ */
+it('prints a readable sentence when the other bar cannot be reached', function (): void {
+    SashaAgent::fake(fn (): never => throw new RuntimeException('Connection refused by 10.0.0.4'));
+    EddieAgent::fake([
+        new ToolCallData('c1', 'AskSasha', ['question' => 'anything']),
+        'She is not picking up, friend. Let me tell you what my own books say.',
+    ]);
+
+    $status = Artisan::call('bar:ask', ['question' => ['ask', 'sasha']]);
+
+    expect($status)->toBe(0)
+        ->and(Artisan::output())
+        ->toContain('The line to the house bar is dead tonight')
+        ->not->toContain('Connection refused');
 });

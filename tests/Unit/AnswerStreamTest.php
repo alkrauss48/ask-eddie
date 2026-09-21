@@ -33,13 +33,14 @@ function textDelta(string $text, string $messageId = 'msg-1'): TextDelta
 }
 
 /**
- * @return array{string, list<string>, list<string>}
+ * @return array{string, list<string>, list<string>, list<array{string, string}>}
  */
 function collectStream(array $events): array
 {
     $text = '';
     $tools = [];
     $errors = [];
+    $consults = [];
 
     // The label map is configuration rather than a const on the stream, so
     // that the two bartenders' tools can be named in one place. Passed here the
@@ -54,9 +55,12 @@ function collectStream(array $events): array
         onError: function (string $message) use (&$errors): void {
             $errors[] = $message;
         },
+        onConsult: function (string $tool, string $answer) use (&$consults): void {
+            $consults[] = [$tool, $answer];
+        },
     );
 
-    return [$text, $tools, $errors];
+    return [$text, $tools, $errors, $consults];
 }
 
 it('hands the deltas on in order', function (): void {
@@ -156,6 +160,84 @@ it('works without the optional handlers', function (): void {
     (new AnswerStream(eddieStream([
         new ToolCall('t1', new ToolCallData('c1', 'SearchTheBooks', []), 0),
         new Error('e1', 'error', 'Ignored.', true, 0),
+        textDelta('Evening.'),
+    ])))->each(function (string $delta) use (&$text): void {
+        $text .= $delta;
+    });
+
+    expect($text)->toBe('Evening.');
+});
+
+/**
+ * The one exception to the rule above, and it is an exception to *what a tool
+ * result is* rather than to the rule. A consult's result is not a payload; it
+ * is prose one bartender wrote for a human, and the guest is meant to read it
+ * attributed to whoever said it.
+ */
+it('lets a consult through, named by the tool that made it', function (): void {
+    $said = 'Rye and blackberry, stirred, with a long lemon twist.';
+
+    [$text, $tools, , $consults] = collectStream([
+        new ToolCall('t1', new ToolCallData('c1', 'AskSasha', ['question' => 'something bright?']), 0),
+        new ToolResult('r1', new ToolResultData('c1', 'AskSasha', [], $said), true, null, 0),
+        textDelta("That's Sasha's, over at the house."),
+    ]);
+
+    expect($consults)->toBe([['AskSasha', $said]])
+        ->and($tools)->toBe(['calling Sasha over'])
+        // The consult is handed to its own callback, never spliced into the
+        // bartender's own sentence.
+        ->and($text)->toBe("That's Sasha's, over at the house.");
+});
+
+it('lets the consult through in the other direction too', function (): void {
+    [, , , $consults] = collectStream([
+        new ToolResult('r1', new ToolResultData('c1', 'AskEddie', [], 'Out of the Savoy, 1930.'), true, null, 0),
+    ]);
+
+    expect($consults)->toBe([['AskEddie', 'Out of the Savoy, 1930.']]);
+});
+
+/**
+ * The allow-list is positive and never negative. A retrieval tool added next
+ * year is dropped because nobody put it on the list, rather than kept because
+ * somebody forgot to exclude it -- which is the difference between a boundary
+ * and a habit.
+ */
+it('drops every other tool result even with a consult handler attached', function (): void {
+    $passage = 'BLUE LADY 1/2 Blue Curaçao. 1/4 Booth\'s Gin.';
+
+    [, , , $consults] = collectStream([
+        new ToolResult('r1', new ToolResultData('c1', 'SearchTheBooks', [], $passage), true, null, 0),
+        new ToolResult('r2', new ToolResultData('c2', 'SurveyTheBooks', [], '[{"name":"Gin Fizz"}]'), true, null, 0),
+        new ToolResult('r3', new ToolResultData('c3', 'SearchTheHouse', [], '[{"title":"Rambler"}]'), true, null, 0),
+        new ToolResult('r4', new ToolResultData('c4', 'BrowseTheMenus', [], '[{"name":"Rambler"}]'), true, null, 0),
+        new ToolResult('r5', new ToolResultData('c5', 'ANewToolNobodyThoughtAbout', [], 'secrets'), true, null, 0),
+    ]);
+
+    expect($consults)->toBeEmpty();
+});
+
+/**
+ * A failed result's payload may be an exception message rather than prose. Our
+ * own failures never arrive this way -- fail-closed means they come back as
+ * *successful* results carrying a sentence -- so anything unsuccessful is the
+ * package's own, and not something to print in a bartender's name.
+ */
+it('does not print a consult that did not run', function (): void {
+    [, , , $consults] = collectStream([
+        new ToolResult('r1', new ToolResultData('c1', 'AskSasha', [], 'Some internal failure.'), false, 'boom', 0),
+        new ToolResult('r2', new ToolResultData('c2', 'AskEddie', [], 'Denied.'), false, null, 0, denied: true),
+    ]);
+
+    expect($consults)->toBeEmpty();
+});
+
+it('still works when nobody is listening for a consult', function (): void {
+    $text = '';
+
+    (new AnswerStream(eddieStream([
+        new ToolResult('r1', new ToolResultData('c1', 'AskSasha', [], 'Unheard.'), true, null, 0),
         textDelta('Evening.'),
     ])))->each(function (string $delta) use (&$text): void {
         $text .= $delta;

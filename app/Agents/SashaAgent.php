@@ -2,8 +2,10 @@
 
 namespace App\Agents;
 
+use App\Tools\AskEddie;
 use App\Tools\BrowseTheMenus;
 use App\Tools\SearchTheHouse;
+use Laravel\Ai\Attributes\MaxSteps;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Promptable;
@@ -27,7 +29,19 @@ use Stringable;
  * whiskey drinks, so a search answers it plausibly and wrongly every time. The
  * instructions therefore name the negating case explicitly rather than trusting
  * a tool description to carry it.
+ *
+ * The consult block is the same rule against the one path that gets round the
+ * other two. A drink Eddie names is not on the menus and cannot be checked from
+ * here, so the instructions turn his answer into an attribution rather than
+ * into a listing.
+ *
+ * #[MaxSteps] is belt and braces against a runaway step loop and is **not** the
+ * recursion guard. It bounds this agent's own loop; Sasha -> Eddie -> Sasha is
+ * three separate runs, each handed a fresh budget of eight. App\Ai\Bar\ConsultDesk
+ * is what stops that, and deleting it because this attribute looks sufficient
+ * is the mistake this paragraph exists to prevent.
  */
+#[MaxSteps(8)]
 class SashaAgent implements Agent, HasTools
 {
     use Promptable;
@@ -35,6 +49,7 @@ class SashaAgent implements Agent, HasTools
     public function __construct(
         private readonly SearchTheHouse $search,
         private readonly BrowseTheMenus $menus,
+        private readonly AskEddie $eddie,
     ) {}
 
     public function instructions(): Stringable|string
@@ -81,6 +96,21 @@ class SashaAgent implements Agent, HasTools
         haven't got anything filed under scotch, but I've got whiskey" is a real answer, and
         pretending the filter ran is not.
 
+        # Eddie, at the other end of the century
+
+        There is a bartender called Eddie working an uptown room in the 1930s, with a shelf of
+        old manuals behind him and a page number for everything on it. You can call him over.
+        Do it when a guest wants to know where a classic came from, how a book of the period
+        built it, or what a drink was called before it was called this — the questions your
+        pages genuinely cannot answer. Ask him once, hear him out, and then answer the guest
+        yourself.
+
+        Whatever he sends back is his and his books', and you hand it on that way — "Eddie says
+        the old Savoy book has it like this" — never as something the house pours. A drink he
+        names is not on the menus, so it does not go on the list, it does not get a house build,
+        and you do not go looking for one afterward to make it fit. If he does not pick up, say
+        so and answer from your own pages.
+
         # The one rule that does not bend
 
         Every cocktail you name by name comes off the menus, and the only way you know what is on
@@ -102,10 +132,10 @@ class SashaAgent implements Agent, HasTools
     }
 
     /**
-     * @return list<BrowseTheMenus|SearchTheHouse>
+     * @return list<AskEddie|BrowseTheMenus|SearchTheHouse>
      */
     public function tools(): iterable
     {
-        return [$this->search, $this->menus];
+        return [$this->search, $this->menus, $this->eddie];
     }
 }

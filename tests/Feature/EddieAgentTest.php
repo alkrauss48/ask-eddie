@@ -1,15 +1,17 @@
 <?php
 
 use App\Agents\EddieAgent;
+use App\Tools\AskSasha;
 use App\Tools\SearchTheBooks;
 use App\Tools\SurveyTheBooks;
+use Laravel\Ai\Attributes\MaxSteps;
 
-it('keeps both the search and the tally behind the bar', function (): void {
+it('keeps the search, the tally and the telephone behind the bar', function (): void {
     $tools = collect(app(EddieAgent::class)->tools())
         ->map(fn (object $tool): string => $tool::class)
         ->all();
 
-    expect($tools)->toEqualCanonicalizing([SearchTheBooks::class, SurveyTheBooks::class]);
+    expect($tools)->toEqualCanonicalizing([SearchTheBooks::class, SurveyTheBooks::class, AskSasha::class]);
 });
 
 /**
@@ -42,4 +44,48 @@ it('still forbids a citation that did not come back from a tool', function (): v
 
     expect($instructions)->toContain('from a search or a tally you just ran')
         ->and($instructions)->toContain('An invented citation is worse than no citation');
+});
+
+/**
+ * The consult is the one path by which a drink name can enter Eddie's mouth
+ * without passing his books, and the invariant survives only because the
+ * instructions convert Sasha's answer into an *attribution* rather than into
+ * his own authority. If this block goes, a drink she named comes back with a
+ * book, a year and a page invented to dress it up -- every other rule in here
+ * still green, and a guest unable to tell.
+ */
+it('tells Eddie that what Sasha says stays hers', function (): void {
+    $instructions = (string) app(EddieAgent::class)->instructions();
+
+    expect($instructions)->toContain('# Sasha, at the other bar')
+        // Substrings that do not span the heredoc's line wraps.
+        ->and($instructions)->toContain('What comes back is hers, and you pass it on as hers')
+        ->and($instructions)->toContain('never as something out of your books')
+        ->and($instructions)->toContain('it gets no book, no year and no page');
+});
+
+/**
+ * The refusal strings are rendered to the guest, so the "...and answer them
+ * yourself" half cannot live in them. It lives here instead, with the "ask her
+ * once" that keeps a bartender from spending an answer on the telephone.
+ */
+it('tells Eddie to ask once and then answer the guest himself', function (): void {
+    $instructions = (string) app(EddieAgent::class)->instructions();
+
+    expect($instructions)->toContain('Ask her once, hear her out, and then answer the guest yourself')
+        ->and($instructions)->toContain('If she cannot come to');
+});
+
+/**
+ * Belt and braces, and labelled as such: #[MaxSteps] bounds this agent's own
+ * step loop, and Eddie -> Sasha -> Eddie is three runs with a fresh budget
+ * each. ConsultDesk is the recursion guard; this is not, and the docblock above
+ * the attribute says so because someone will otherwise delete the desk.
+ */
+it('bounds its own step loop without pretending to bound recursion', function (): void {
+    $reflection = new ReflectionClass(EddieAgent::class);
+
+    expect($reflection->getAttributes(MaxSteps::class))->toHaveCount(1)
+        ->and($reflection->getAttributes(MaxSteps::class)[0]->newInstance()->value)->toBe(8)
+        ->and($reflection->getDocComment())->toContain('not** the');
 });
