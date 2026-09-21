@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\BarAskController;
 use App\Http\Controllers\BartendersController;
 use Illuminate\Support\Facades\Route;
 
@@ -22,4 +23,9 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware('bar.key')->group(function (): void {
     Route::get('/bartenders', BartendersController::class)->name('api.bartenders');
+
+    // POST because it spends money and opens a conversation, and because the
+    // question belongs in a body rather than in a query string that is written
+    // to every access log between here and the caller.
+    Route::post('/ask', BarAskController::class)->name('api.ask');
 });
