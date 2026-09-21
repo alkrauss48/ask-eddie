@@ -211,6 +211,18 @@ return [
             fn (string $key): bool => $key !== '',
         )),
 
+        /*
+        | Questions per minute, per caller. Keyed by the presented API key
+        | rather than counted globally -- see the 'bar-ask' limiter in
+        | AppServiceProvider::boot() -- so one noisy key cannot spend another
+        | caller's allowance, and a caller with no key at all (which never
+        | gets past VerifyBarKey anyway) is bucketed by IP instead. This is
+        | not a budget: it bounds *how often*, not how much any one question
+        | costs. Twelve is one every five seconds, sustained -- enough for a
+        | real conversation, not enough for a script left running.
+        */
+        'rate_limit' => (int) env('BAR_API_RATE_LIMIT', 12),
+
     ],
 
     /*

@@ -27,5 +27,12 @@ Route::middleware('bar.key')->group(function (): void {
     // POST because it spends money and opens a conversation, and because the
     // question belongs in a body rather than in a query string that is written
     // to every access log between here and the caller.
-    Route::post('/ask', BarAskController::class)->name('api.ask');
+    //
+    // throttle:bar-ask is the cap on how often, not the lock on the door --
+    // that is bar.key, above, and it runs first. The limiter is registered in
+    // AppServiceProvider::boot() rather than a RouteServiceProvider, which this
+    // application does not have.
+    Route::post('/ask', BarAskController::class)
+        ->middleware('throttle:bar-ask')
+        ->name('api.ask');
 });
