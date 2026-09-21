@@ -39,5 +39,16 @@ Route::middleware('bar.key')->group(function (): void {
 
     // Debug-only: also gated on config('app.debug') inside the controller,
     // which answers 404 rather than the bar's usual 401 when debug is off.
-    Route::post('/search', SearchController::class)->name('api.search');
+    //
+    // Throttled on the same bucket as /ask, deliberately, rather than on one of
+    // its own. This route asks no model, but it does embed the question through
+    // TEI and then run a cross-encoder over the candidates, which is the
+    // slowest thing in the application on an emulated arm64 host -- so an
+    // uncapped loop here holds request slots for as long as it likes even
+    // though it spends nothing at the provider. Sharing the bucket means the
+    // per-minute allowance is what a caller may spend across the bar's
+    // expensive routes, not per route: two buckets would quietly double it.
+    Route::post('/search', SearchController::class)
+        ->middleware('throttle:bar-ask')
+        ->name('api.search');
 });

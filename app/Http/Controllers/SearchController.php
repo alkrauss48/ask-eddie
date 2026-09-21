@@ -34,12 +34,24 @@ use Illuminate\Validation\Rule;
  */
 final class SearchController extends Controller
 {
+    /**
+     * The longest question the search will take.
+     *
+     * The same ceiling BarAskController puts on its own question, for a
+     * different reason: nothing here is billed by the token, but every call
+     * embeds the string through TEI and then reranks the candidates against
+     * it, which is the slowest path in the application on an emulated arm64
+     * host. The per-minute cap on the route bounds how often; this bounds how
+     * large any one of those calls can be.
+     */
+    private const MAX_QUESTION = 2000;
+
     public function __invoke(Request $request, Bartenders $bartenders): JsonResponse
     {
         abort_unless((bool) config('app.debug'), 404);
 
         $validated = $request->validate([
-            'question' => ['required', 'string'],
+            'question' => ['required', 'string', 'max:'.self::MAX_QUESTION],
             'bartender' => ['required', 'string', Rule::in($bartenders->keys())],
         ]);
 
