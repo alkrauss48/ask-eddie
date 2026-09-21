@@ -6,6 +6,7 @@ use Laravel\Ai\Responses\StreamableAgentResponse;
 use Laravel\Ai\Streaming\Events\Error;
 use Laravel\Ai\Streaming\Events\TextDelta;
 use Laravel\Ai\Streaming\Events\ToolCall;
+use Laravel\Ai\Streaming\Events\ToolResult;
 
 /**
  * The one place that decides which of a bartender's stream events a guest may see.
@@ -19,9 +20,26 @@ use Laravel\Ai\Streaming\Events\ToolCall;
  * Which is also why this class exists rather than a foreach in BarAskCommand: the
  * JSON API will consume the same stream with a different sink, and this is the
  * part it must not re-decide.
+ *
+ * The consult is the single exception, and it is an exception to *what a tool
+ * result is*, not to the rule. A consult's result is not a payload -- it is
+ * prose one bartender wrote for a human, which the guest is meant to read
+ * attributed to whoever said it. So the allow-list below is positive and never
+ * negative: a retrieval tool added next year is dropped because nobody put it
+ * on the list, rather than kept because somebody forgot to exclude it. That is
+ * also why it stays here as a const while the in-character labels live in
+ * config('bar.labels') -- the labels are copy, this is the payload boundary,
+ * and the two must not become one editable list.
  */
 final class AnswerStream
 {
+    /**
+     * The only tools whose results a guest may see.
+     *
+     * @var list<string>
+     */
+    private const CONSULTS = ['AskSasha', 'AskEddie'];
+
     /**
      * @param  array<string, string>  $labels  in-character tool names, keyed by
      *                                         the name the model sees, which
@@ -43,9 +61,20 @@ final class AnswerStream
      * @param  callable(string $delta): void  $onText
      * @param  (callable(string $label): void)|null  $onTool
      * @param  (callable(string $message): void)|null  $onError
+     * @param  (callable(string $tool, string $answer): void)|null  $onConsult
+     *
+     * $onConsult is handed the tool's name rather than its label, because the
+     * label answers "what is happening" and an attribution answers "who said
+     * this" -- a terminal prints one over a quoted block and an SSE sink may
+     * want neither. Deciding that here would make this class the place that
+     * knows how a consult is presented, which is the consumer's business.
      */
-    public function each(callable $onText, ?callable $onTool = null, ?callable $onError = null): void
-    {
+    public function each(
+        callable $onText,
+        ?callable $onTool = null,
+        ?callable $onError = null,
+        ?callable $onConsult = null,
+    ): void {
         $messageId = null;
         $started = false;
         $breakPending = false;
@@ -53,6 +82,18 @@ final class AnswerStream
         foreach ($this->response as $event) {
             if ($event instanceof ToolCall) {
                 $onTool === null || $onTool($this->label($event->toolCall->name));
+
+                continue;
+            }
+
+            if ($event instanceof ToolResult) {
+                // Only a consult, only when it ran. A failed result's payload
+                // may be an exception message rather than prose -- our own
+                // failures already come back as *successful* results carrying a
+                // sentence, which is exactly what fail-closed buys.
+                if ($onConsult !== null && $event->successful && in_array($event->toolResult->name, self::CONSULTS, true)) {
+                    $onConsult($event->toolResult->name, (string) $event->toolResult->result);
+                }
 
                 continue;
             }

@@ -2,13 +2,14 @@
 
 namespace App\Console\Commands;
 
+use App\Ai\Bar\Bartenders;
+use App\Ai\Bar\ConsultDesk;
 use App\Ai\Streaming\AnswerStream;
 use App\Console\IndentedWriter;
 use App\Services\Retrieval\HybridRetriever;
 use App\Services\Retrieval\RetrievedChunk;
 use Illuminate\Console\Command;
 use Illuminate\Support\Collection;
-use Laravel\Ai\Contracts\Agent;
 use Throwable;
 
 /**
@@ -26,6 +27,10 @@ use Throwable;
  * this shape exists to prevent: --sources against Sasha's answer showing
  * Eddie's passages would be a table of real citations from the wrong corpus,
  * with nothing on screen to say so.
+ *
+ * A consult renders inline, indented under the name of whoever said it. That is
+ * the only tool result a guest ever sees, and AnswerStream decides which ones
+ * qualify -- this class only decides what the block looks like.
  */
 class BarAskCommand extends Command
 {
@@ -38,16 +43,15 @@ class BarAskCommand extends Command
 
     protected $description = 'Ask a bartender a question, grounded in their own corpus';
 
-    public function handle(): int
+    public function handle(Bartenders $bartenders): int
     {
         $key = (string) ($this->option('bartender') ?: config('bar.default'));
 
-        /** @var array<string, mixed>|null $bartender */
-        $bartender = config("bar.bartenders.{$key}");
+        $bartender = $bartenders->find($key);
 
         if ($bartender === null) {
             $this->error("Nobody called \"{$key}\" works here.");
-            $this->line('  <fg=gray>Behind the bar: '.implode(', ', array_keys((array) config('bar.bartenders'))).'</>');
+            $this->line('  <fg=gray>Behind the bar: '.implode(', ', $bartenders->keys()).'</>');
 
             return self::FAILURE;
         }
@@ -60,7 +64,7 @@ class BarAskCommand extends Command
             }
         }
 
-        return $this->answer($bartender);
+        return $this->answer($key, $bartenders);
     }
 
     /**
@@ -97,30 +101,27 @@ class BarAskCommand extends Command
 
     /**
      * Stream the bartender's answer to the terminal.
-     *
-     * @param  array<string, mixed>  $bartender
      */
-    private function answer(array $bartender): int
+    private function answer(string $key, Bartenders $bartenders): int
     {
         $this->newLine();
 
         $writer = new IndentedWriter($this->output);
 
-        /** @var Agent $agent */
-        $agent = app($bartender['agent']);
+        // One answer, one allowance of consults. A CLI run is a process and a
+        // process is an answer, but the desk is a singleton and the JSON API
+        // will not be -- so the boundary is stated rather than inherited from
+        // how the command happens to be invoked.
+        app(ConsultDesk::class)->reset();
 
         // A blocking prompt() failed before a word had been printed, so the
         // error could simply be written. A stream can fail half a sentence in,
         // which is what close() is for on this path.
         try {
-            $stream = $agent->stream(
-                implode(' ', (array) $this->argument('question')),
-                // Passed at call time rather than declared as a #[Provider]
-                // attribute on the agent, so a bartender can be moved to
-                // another provider or model with an environment variable.
-                provider: $bartender['provider'],
-                model: $bartender['model'],
-            );
+            // The registry threads provider and model, so they are named in one
+            // place whether a bartender is answering a guest or answering the
+            // other bartender.
+            $stream = $bartenders->stream($key, implode(' ', (array) $this->argument('question')));
 
             (new AnswerStream($stream, (array) config('bar.labels')))->each(
                 onText: $writer->write(...),
@@ -137,11 +138,16 @@ class BarAskCommand extends Command
 
                     $this->line("  <fg=yellow>{$message}</>");
                 },
+                onConsult: function (string $tool, string $answer) use ($writer): void {
+                    $writer->close();
+
+                    $this->consult($tool, $answer);
+                },
             );
         } catch (Throwable $exception) {
             $writer->close();
 
-            $this->error("{$bartender['name']} could not answer: ".$exception->getMessage());
+            $this->error($bartenders->name($key).' could not answer: '.$exception->getMessage());
 
             return self::FAILURE;
         }
@@ -151,6 +157,30 @@ class BarAskCommand extends Command
         $this->newLine();
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Print what the other bartender said, in their name and set apart.
+     *
+     * IndentedWriter needs nothing added for this: it already takes the indent
+     * in its constructor, and a second instance carrying '  | ' *is* the quoted
+     * block. The indent has to be plain text because it is written OUTPUT_RAW,
+     * where a <fg=gray> tag would print literally; the attribution line goes
+     * through line(), which does interpret styles.
+     */
+    private function consult(string $tool, string $answer): void
+    {
+        $voice = (string) (config("bar.consults.voices.{$tool}") ?? $tool);
+
+        $this->newLine();
+        $this->line("  <fg=gray>— {$voice} says —</>");
+
+        $quoted = new IndentedWriter($this->output, '  │ ');
+
+        $quoted->write(trim($answer));
+        $quoted->close();
+
+        $this->newLine();
     }
 
     /**

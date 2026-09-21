@@ -1,15 +1,17 @@
 <?php
 
 use App\Agents\SashaAgent;
+use App\Tools\AskEddie;
 use App\Tools\BrowseTheMenus;
 use App\Tools\SearchTheHouse;
+use Laravel\Ai\Attributes\MaxSteps;
 
-it('keeps both the house pages and the menus behind the bar', function (): void {
+it('keeps the house pages, the menus and the telephone behind the bar', function (): void {
     $tools = collect(app(SashaAgent::class)->tools())
         ->map(fn (object $tool): string => $tool::class)
         ->all();
 
-    expect($tools)->toEqualCanonicalizing([SearchTheHouse::class, BrowseTheMenus::class]);
+    expect($tools)->toEqualCanonicalizing([SearchTheHouse::class, BrowseTheMenus::class, AskEddie::class]);
 });
 
 /**
@@ -77,4 +79,43 @@ it('tells sasha the build comes off the house page rather than from memory', fun
 
     expect($instructions)->toContain('not from what you remember a Negroni being')
         ->and($instructions)->toContain('asks how the house makes something and you have not looked, look');
+});
+
+/**
+ * The mirror of Eddie's consult rule, and the mirror of its risk: this is the
+ * one path by which a book-shaped claim reaches Sasha without passing a tool of
+ * her own, and a drink Eddie names is by definition not on the menus. Without
+ * this block she puts it on the list, with a house build she invented for it.
+ */
+it('tells Sasha that what Eddie says stays his', function (): void {
+    $instructions = (string) app(SashaAgent::class)->instructions();
+
+    expect($instructions)->toContain('# Eddie, at the other end of the century')
+        // Substrings that do not span the heredoc's line wraps.
+        ->and($instructions)->toContain("Whatever he sends back is his and his books'")
+        ->and($instructions)->toContain('never as something the house pours')
+        ->and($instructions)->toContain('it does not get a house build');
+});
+
+/**
+ * The refusal strings are rendered to the guest, so the "...and answer them
+ * yourself" half lives here rather than in them.
+ */
+it('tells Sasha to ask once and then answer the guest herself', function (): void {
+    $instructions = (string) app(SashaAgent::class)->instructions();
+
+    expect($instructions)->toContain('Ask him once, hear him out, and then answer the guest')
+        ->and($instructions)->toContain('If he does not pick up');
+});
+
+/**
+ * Belt and braces, and labelled as such. ConsultDesk is the recursion guard;
+ * this attribute bounds one agent's own step loop and nothing more.
+ */
+it('bounds its own step loop without pretending to bound recursion', function (): void {
+    $reflection = new ReflectionClass(SashaAgent::class);
+
+    expect($reflection->getAttributes(MaxSteps::class))->toHaveCount(1)
+        ->and($reflection->getAttributes(MaxSteps::class)[0]->newInstance()->value)->toBe(8)
+        ->and($reflection->getDocComment())->toContain('not** the');
 });

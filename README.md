@@ -23,6 +23,9 @@ Getting there takes two halves:
 6. **Put a second bartender behind it.** Sasha works the same bar from the other end of the
    century, names only drinks the house pours, and shares one command with Eddie — see
    [Step 6: Sasha](#step-6-sasha).
+7. **Let them talk to each other.** Either bartender can call the other over mid-answer, and
+   the guest sees the reply attributed rather than absorbed — see
+   [Step 7: the consult](#step-7-the-consult).
 
 ---
 
@@ -590,7 +593,7 @@ difference from using Cohere is the name in configuration.
 | Command | What it does |
 | --- | --- |
 | `books:embed` | Embeds indexable chunks. `--book=slug` (repeatable), `--force`, `--batch=`, `--dry-run`, `--verify`. Resumable; holds a cache lock. |
-| `bar:ask` | Asks a bartender a question, streaming the answer as it is written. `--bartender=eddie\|sasha` picks who, and with them the corpus; `--sources` shows both channel ranks and the fused score, `--retrieval-only` stops before the language model, `--limit=`. See [Step 6](#step-6-sasha). |
+| `bar:ask` | Asks a bartender a question, streaming the answer as it is written. `--bartender=eddie\|sasha` picks who, and with them the corpus; `--sources` shows both channel ranks and the fused score, `--retrieval-only` stops before the language model, `--limit=`. Either bartender may call the other over mid-answer. See [Step 6](#step-6-sasha) and [Step 7](#step-7-the-consult). |
 
 ### Configuration
 
@@ -1285,6 +1288,184 @@ prompt-level guarantee rather than a hard one — the same standing as Eddie's c
 which the project already accepts. A `--check-names` flag that greps an answer for titles
 absent from that table would turn it into a measurement, and is the obvious next move if she
 drifts.
+
+---
+
+## Step 7: the consult
+
+The two bartenders know different things, and now each can lean over and ask the other — in
+view of the guest.
+
+```
+  guest ──► bar:ask --bartender=eddie
+              │
+              ├─ SearchTheBooks / SurveyTheBooks ──► his own corpus
+              │
+              └─ AskSasha ──► ConsultDesk ──► Bartenders ──► SashaAgent
+                                  │                             │
+                       depth flag + per-answer cap       her own tools,
+                                  │                     her own provider
+                                  ▼
+                       AnswerStream ─ onConsult ─► "— Sasha says —"
+```
+
+Eddie calls Sasha when a guest wants something from after his time. Sasha calls Eddie when a
+guest wants to know where a classic came from. Ask once, hear them out, answer the guest
+yourself.
+
+### Not `AgentTool`, and not for the reason you would guess
+
+`laravel/ai` will register an Agent directly as another Agent's tool. Reading
+`vendor/laravel/ai/src/Tools/AgentTool.php` disqualifies it on three counts:
+
+```php
+public function handle(Request $request): string
+{
+    try {
+        return $this->agent->prompt((string) $request['task'])->text;
+    } catch (Throwable $throwable) {
+        return 'Agent failed: '.$throwable->getMessage();
+    }
+}
+```
+
+1. `prompt()` with **no provider and no model**. Sasha-as-Eddie's-sub-agent would silently run
+   on `config('ai.default')` rather than the row `config/bar.php` gives her — so
+   `SASHA_TEXT_MODEL` would apply when a guest asks her and not when Eddie does, with nothing
+   on screen to say so. The per-bartender model decision cannot be honoured through it at all.
+2. Its failure string is a raw exception message injected into the model's context, which
+   breaks both the character rule and the fail-closed-with-a-sentence doctrine every other
+   tool here follows. Under this design it would also be printed straight to the guest.
+3. `#[MaxSteps]` bounds the **parent's** step loop, not recursion depth. Eddie → Sasha → Eddie
+   is three independent runs, each with a fresh budget of eight. `ParentInvocation` carries ids
+   for event correlation and keeps no counter. Raw registration has **no recursion guard
+   whatsoever** — and that fires on the first `bar:ask` that happens to go round twice, not in
+   some corner case.
+
+So each agent is wrapped in a thin Tool. `AskSasha` and `AskEddie` also read far better to a
+model than anything generic, and the distinct names are what let `AnswerStream` attribute the
+reply and allow-list it for rendering.
+
+### A container cycle, and why the tools resolve late
+
+`AskSasha` → `SashaAgent` → `AskEddie` → `EddieAgent` → `AskSasha`. Constructor-injecting the
+other agent makes `app(EddieAgent::class)` recurse until the container dies. The consult tools
+therefore hold a `Bartenders` registry — which depends on nothing agent-shaped — and resolve
+the other bartender lazily inside `handle()`, by which time both agents are already built.
+
+That registry is also the only place provider and model get threaded, which is precisely what
+`AgentTool` could not do.
+
+### Two guards, because there are two failures
+
+`App\Ai\Bar\ConsultDesk` is a singleton (a fresh instance per injection would let each tool
+believe nothing was open, which is the recursion it exists to stop) and holds both:
+
+- **Depth** is one boolean, not a counter. Consults are synchronous, so "a consult is already
+  open" and "this consult is re-entrant" are the same condition — which makes one flag an exact
+  one-level limit. Released in a `finally`, so a sub-agent that throws does not wedge the desk
+  shut for the rest of the answer.
+- **Count** is capped per answer at `BAR_CONSULT_LIMIT`. This looks like the obvious trim and
+  guards a different failure: recursion hangs forever, while a non-recursive model that calls
+  the consult nine times never trips the depth flag — it just costs nine invocations and leaves
+  a guest watching a dead terminal.
+
+The desk returns a `ConsultRefusal` enum (`Busy` / `Spent`) rather than a string, so the desk
+owns the *decision* and each tool owns the *wording* — Eddie's refusal sounds like Eddie's.
+`Consultation::handle()` is `final`: the mechanism is invariant, the voice is not, and a
+consult that skipped the desk would be a consult with no guard at all.
+
+`#[MaxSteps(8)]` on each agent is belt and braces against a runaway step loop, and both class
+docblocks say plainly that it is **not** the recursion guard — otherwise someone deletes the
+desk.
+
+### One register shift, and it is deliberate
+
+Every other tool in this application returns model-directed prose — *"Say so rather than
+inventing one."* Those returns are dropped by `AnswerStream` and never seen by anyone. Consult
+returns **are rendered to the guest**, so they have to be sentences a person can read:
+
+> Sasha is already at your bar and cannot be in two places at once.
+
+The *"…so answer the guest yourself"* half moved into the agents' instructions instead.
+Getting this backwards puts stage directions on the terminal, so `ConsultationTest` greps
+every return for one.
+
+### Letting the guest see it
+
+`AnswerStream` drops `ToolResult` so the eight-key passage payload never reaches a terminal or
+an SSE sink, and that rule is not weakened here. But a consult's result is not a payload — it
+is prose one bartender wrote for a human. So `each()` gained a fourth callback:
+
+```php
+public function each(
+    callable $onText,
+    ?callable $onTool = null,
+    ?callable $onError = null,
+    ?callable $onConsult = null,
+): void
+```
+
+fired **only** for a `ToolResult` whose tool name is on a consult allow-list, and only when
+`$event->successful` — a failed result's payload may be an exception message, whereas our own
+failures come back as *successful* results carrying a sentence, which is what fail-closed buys.
+Everything else still falls through the existing `continue`.
+
+The allow-list is **positive, never negative**, and stays a private const in `AnswerStream`
+even though the in-character labels live in `config('bar.labels')`. That split is the whole
+rule: the labels are copy, the allow-list is the payload boundary. A retrieval tool added next
+year is dropped because nobody put it on the list — not because somebody remembered to exclude
+it.
+
+`IndentedWriter` needed no change at all: it already takes `$indent` in its constructor, and a
+second instance with `'  │ '` *is* the quoted block.
+
+```
+  Let me see what she's pouring these days, friend.
+
+  ⋯ calling Sasha over
+
+  — Sasha says —
+  │ Rye and blackberry, stirred, with a long lemon twist. It's the
+  │ Midnight Rambler — it's been on the spring menu since we opened.
+
+  That's Sasha's, over at the house. My books have nothing like it...
+```
+
+### The invariant the consult could break
+
+**This is the one path by which a drink name can enter Sasha's mouth without passing her
+tools, and a book-shaped claim can enter Eddie's without passing his.** Both survive only
+because the instructions convert the other's answer into an *attribution* rather than into
+their own authority — "that's Sasha's, over at the house", "Eddie says the old Savoy book has
+it like this". A drink Sasha names gets no book, no year and no page from Eddie; a drink Eddie
+names does not go on the menus and does not get a house build. Both instruction blocks are
+pinned by tests.
+
+### The end-to-end test is real
+
+`ToolResult` stream events are emitted by `TextGenerationLoop`, not by the gateway. So faking
+Eddie into calling `AskSasha`, with a faked Sasha behind it, runs the **real** tool through the
+**real** desk and sends a **real** `ToolResult` through `AnswerStream` into the terminal
+rendering. Nothing between the two bartenders is stubbed.
+
+The depth guard is asserted through the desk rather than by actually recursing: a test that
+recursed would hang rather than fail if the guard were removed.
+
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BAR_CONSULT_LIMIT` | `2` | Consults allowed per answer. `0` turns consulting off without touching a class or a roster. |
+
+### Running it
+
+```bash
+sail artisan bar:ask --bartender=eddie "what would a modern bartender do with a sazerac?"
+sail artisan bar:ask --bartender=sasha "where does the negroni actually come from?"
+```
+
+The consult should render inline, attributed, and exactly once.
 
 ---
 

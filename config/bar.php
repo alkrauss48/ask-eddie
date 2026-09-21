@@ -96,6 +96,41 @@ return [
         'SurveyTheBooks' => "counting what's on the shelf",
         'SearchTheHouse' => 'checking the house pages',
         'BrowseTheMenus' => 'running an eye down the menus',
+        'AskSasha' => 'calling Sasha over',
+        'AskEddie' => 'calling Eddie over',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Consulting The Other Bartender
+    |--------------------------------------------------------------------------
+    |
+    | Each bartender carries a tool that calls the other one over, and the guest
+    | sees the reply attributed rather than absorbed. Two knobs, guarding two
+    | different failures -- see App\Ai\Bar\ConsultDesk, which holds both.
+    |
+    | The limit is per answer, not per process. Two is a conversation: enough
+    | that Eddie can ask Sasha and then, having heard her, ask about something
+    | she said; few enough that a model which has decided consulting is the
+    | answer to everything runs out rather than running on. Zero turns consults
+    | off without touching a class or an agent's roster.
+    |
+    | "voices" is the name printed over a consult's reply in the terminal. It is
+    | copy, so it lives here; which tool results may be shown to a guest at all
+    | is a payload boundary, so that stays as an allow-list inside AnswerStream.
+    | The two are deliberately not the same list.
+    |
+    */
+
+    'consults' => [
+
+        'limit' => (int) env('BAR_CONSULT_LIMIT', 2),
+
+        'voices' => [
+            'AskSasha' => 'Sasha',
+            'AskEddie' => 'Eddie',
+        ],
+
     ],
 
     /*

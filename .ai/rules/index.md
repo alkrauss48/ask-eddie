@@ -4,6 +4,7 @@ Before planning or editing, find the row whose globs match the file's path and r
 
 | Applies to | Rule file |
 | --- | --- |
+| app/Ai/Bar/**, app/Tools/Consultation.php, app/Tools/Ask*.php, app/Ai/Streaming/AnswerStream.php, app/Agents/**, app/Console/Commands/BarAskCommand.php | .ai/rules/bar.md |
 | app/Services/Books/**, app/Services/Books/PageTextNormalizer.php, app/Services/Books/PageExtractor.php, app/Services/Books/Drink*.php | .ai/rules/books.md |
 | config/books.php, config/bar.php | .ai/rules/config.md |
 | docker/** | .ai/rules/docker.md |
