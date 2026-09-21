@@ -135,6 +135,46 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | The Guest's Tab
+    |--------------------------------------------------------------------------
+    |
+    | A bar:ask run is a process, so "the same conversation" is not something
+    | the runtime knows -- it has to be decided, and the decision here is a
+    | bar's. The guest has a tab. It stays open while they keep asking and
+    | closes once they have been gone a while, and the next question picks up
+    | where the last one left off with nothing typed.
+    |
+    | One tab per bartender, keyed by name and bartender together, and never
+    | one shared between them. laravel/ai replays a stored assistant turn as
+    | the *current* agent's own prior words, with nothing on the row to say who
+    | said it -- so a shared tab would hand Sasha Eddie's book-cited drinks as
+    | her own memory. That is the invariant the consult was built around and
+    | the one Consultation::schema() promises the model is impossible.
+    |
+    | "idle" is minutes of quiet before the tab closes. Zero turns memory off
+    | entirely and restores the stateless run bar:ask was before tabs existed,
+    | without touching a class -- the same shape as consults.limit above.
+    |
+    | "messages" caps how many stored rows are read back into context. The
+    | package's own default is 100. An assistant row carries its tool_results
+    | and hydration replays them, so each earlier turn puts its retrieval
+    | payload back in front of the model; a dozen rows is six exchanges, which
+    | is a conversation, and a hundred is a bill.
+    |
+    */
+
+    'tabs' => [
+
+        'default' => env('BAR_TAB', 'bar'),
+
+        'idle' => (int) env('BAR_TAB_IDLE', 120),
+
+        'messages' => (int) env('BAR_TAB_MESSAGES', 12),
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Menu Browsing
     |--------------------------------------------------------------------------
     |

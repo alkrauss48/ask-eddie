@@ -6,8 +6,10 @@ use App\Tools\AskEddie;
 use App\Tools\BrowseTheMenus;
 use App\Tools\SearchTheHouse;
 use Laravel\Ai\Attributes\MaxSteps;
+use Laravel\Ai\Concerns\RemembersConversations as KeepsATab;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\HasTools;
+use Laravel\Ai\Contracts\RemembersConversations;
 use Laravel\Ai\Promptable;
 use Stringable;
 
@@ -35,6 +37,21 @@ use Stringable;
  * here, so the instructions turn his answer into an attribution rather than
  * into a listing.
  *
+ * The tab is what makes a second question mean anything. Both halves of it are
+ * load-bearing and neither is redundant: the *trait* is what
+ * GeneratesText::gatherMiddlewareFor() looks for -- by FQCN, through
+ * class_uses_recursive, so persistence is opted into with `use` and not with
+ * `implements` -- while the *contract* extends Conversational, which is what
+ * StreamsText checks before it will read messages() back. Add one without the
+ * other and the history is written and never read, which looks like a working
+ * feature until somebody asks a follow-up.
+ *
+ * A consulted bartender is outside all of this, and by construction rather
+ * than by a flag: Bartenders::ask() resolves a fresh agent and hands it no
+ * conversation, so shouldRemember() is false and messages() is empty. That is
+ * what Consultation::schema() has always promised the model -- "they cannot
+ * hear the conversation you are having" -- and BarTabTest pins it.
+ *
  * #[MaxSteps] is belt and braces against a runaway step loop and is **not** the
  * recursion guard. It bounds this agent's own loop; Sasha -> Eddie -> Sasha is
  * three separate runs, each handed a fresh budget of eight. App\Ai\Bar\ConsultDesk
@@ -42,15 +59,31 @@ use Stringable;
  * is the mistake this paragraph exists to prevent.
  */
 #[MaxSteps(8)]
-class SashaAgent implements Agent, HasTools
+class SashaAgent implements Agent, HasTools, RemembersConversations
 {
-    use Promptable;
+    use KeepsATab, Promptable;
 
     public function __construct(
         private readonly SearchTheHouse $search,
         private readonly BrowseTheMenus $menus,
         private readonly AskEddie $eddie,
     ) {}
+
+    /**
+     * How much of the tab is read back into context.
+     *
+     * The package's own default is 100 rows. An assistant row carries its
+     * tool_results, and hydration replays them, so every earlier turn puts its
+     * retrieval payload back in front of the model -- a page of house passages
+     * or a menu's worth of drinks per turn. The cap is on rows rather than tokens
+     * because rows are what the store counts, and truncating on one is safe:
+     * getLatestConversationMessages() ends with skipWhile(ToolResultMessage),
+     * so a window cannot begin with a result whose call fell off the back.
+     */
+    protected function maxConversationMessages(): int
+    {
+        return (int) config('bar.tabs.messages');
+    }
 
     public function instructions(): Stringable|string
     {

@@ -46,6 +46,39 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Conversations
+    |--------------------------------------------------------------------------
+    |
+    | Where a guest's tab is written down. The tables were published with the
+    | package's migration on day one and sat empty until tabs arrived; the keys
+    | are named here rather than left to the inline defaults scattered through
+    | the store, the models and the migration, so the connection and the table
+    | names are visible in one place. A null connection is the default one --
+    | config('database.default') cannot be read from this file, which is loaded
+    | before database.php.
+    |
+    | "generate_title" is off deliberately. With it on, laravel/ai names each
+    | new conversation with an extra call to the provider's cheapestTextModel()
+    | -- a model nobody in config/bar.php chose, billed once per tab, which is
+    | the same silent-provider failure .ai/rules/bar.md disqualifies AgentTool
+    | for. App\Ai\Bar\TabKeeper creates the row itself and titles it with what
+    | the guest said, so the call would not fire today in any case; this is here
+    | so a future caller that lets the middleware open a conversation does not
+    | quietly start paying for one.
+    |
+    */
+
+    'conversations' => [
+        'connection' => env('AI_CONVERSATIONS_CONNECTION'),
+        'generate_title' => false,
+        'tables' => [
+            'conversations' => 'agent_conversations',
+            'messages' => 'agent_conversation_messages',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | AI Providers
     |--------------------------------------------------------------------------
     |
