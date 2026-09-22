@@ -1,0 +1,11 @@
+#!/bin/sh
+#
+# Caches the framework's configuration, routes, events and views against the
+# environment the container was actually handed. It cannot be done at build
+# time: every value arrives from the ConfigMap and the Secrets, and a config
+# cache baked without them would freeze the wrong ones in.
+set -e
+
+php artisan optimize
+
+exec "$@"
