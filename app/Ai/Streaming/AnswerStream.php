@@ -2,8 +2,11 @@
 
 namespace App\Ai\Streaming;
 
+use Illuminate\Support\Facades\Log;
+use Laravel\Ai\Responses\Data\FinishReason;
 use Laravel\Ai\Responses\StreamableAgentResponse;
 use Laravel\Ai\Streaming\Events\Error;
+use Laravel\Ai\Streaming\Events\StreamEnd;
 use Laravel\Ai\Streaming\Events\TextDelta;
 use Laravel\Ai\Streaming\Events\ToolCall;
 use Laravel\Ai\Streaming\Events\ToolResult;
@@ -98,6 +101,12 @@ final class AnswerStream
                 continue;
             }
 
+            if ($event instanceof StreamEnd) {
+                $this->noteIfCutShort($event);
+
+                continue;
+            }
+
             if ($event instanceof Error) {
                 $onError === null || $onError($event->message);
 
@@ -137,6 +146,28 @@ final class AnswerStream
 
             $onText($delta);
         }
+    }
+
+    /**
+     * Tell an operator, never a guest, when an answer ran into the token cap.
+     *
+     * A call stopped by config('bar.answers.max_tokens') ends like any other:
+     * the text stops and the stream closes, with nothing on the wire to say
+     * it was cut. That is deliberate -- the cap is a backstop, and the SSE
+     * contract has no frame for it -- so the log is the only place it shows.
+     * Seen often, it means the cap is too tight, not that guests need a label.
+     */
+    private function noteIfCutShort(StreamEnd $event): void
+    {
+        if ($event->reason !== FinishReason::Length->value) {
+            return;
+        }
+
+        Log::warning('A bartender ran into the answer token cap.', [
+            'invocation_id' => $this->response->invocationId,
+            'max_tokens' => (int) config('bar.answers.max_tokens'),
+            'completion_tokens' => $event->usage->completionTokens,
+        ]);
     }
 
     /**

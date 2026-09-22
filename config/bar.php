@@ -175,6 +175,39 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | The Length Of An Answer
+    |--------------------------------------------------------------------------
+    |
+    | The tab caps how much of the past comes back into context; this caps how
+    | much of the present a single answer may run to. Without it, a bartender
+    | who gets going talks until the provider's own ceiling stops him, and the
+    | provider's ceiling is a bill, not a bar's judgement.
+    |
+    | "max_tokens" is output tokens per model call -- per *step*, not per
+    | answer. An answer that searches and then speaks is two or three calls,
+    | each with its own allowance, so the most one answer can say is this
+    | times #[MaxSteps], plus whatever a consult says on its own budget.
+    |
+    | "timeout" is seconds per provider HTTP call, and the package's own
+    | default is the same sixty -- it is written down here so it is a decision
+    | rather than an accident. It is not a wall clock on the whole stream: that
+    | is bounded by MaxSteps times this, plus the consults.
+    |
+    | Both are read by the agents themselves (maxTokens() and timeout()), so a
+    | consulted bartender is held to them too.
+    |
+    */
+
+    'answers' => [
+
+        'max_tokens' => (int) env('BAR_ANSWER_MAX_TOKENS', 1500),
+
+        'timeout' => (int) env('BAR_ANSWER_TIMEOUT', 60),
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | The Door Onto The Web
     |--------------------------------------------------------------------------
     |

@@ -1,11 +1,14 @@
 <?php
 
 use App\Ai\Streaming\AnswerStream;
+use Illuminate\Support\Facades\Log;
 use Laravel\Ai\Responses\Data\Meta;
 use Laravel\Ai\Responses\Data\ToolCall as ToolCallData;
 use Laravel\Ai\Responses\Data\ToolResult as ToolResultData;
+use Laravel\Ai\Responses\Data\Usage;
 use Laravel\Ai\Responses\StreamableAgentResponse;
 use Laravel\Ai\Streaming\Events\Error;
+use Laravel\Ai\Streaming\Events\StreamEnd;
 use Laravel\Ai\Streaming\Events\StreamEvent;
 use Laravel\Ai\Streaming\Events\TextDelta;
 use Laravel\Ai\Streaming\Events\TextEnd;
@@ -244,4 +247,41 @@ it('still works when nobody is listening for a consult', function (): void {
     });
 
     expect($text)->toBe('Evening.');
+});
+
+/**
+ * The token cap ends an answer the way any answer ends, so nothing on the wire
+ * says it was cut. The log is the only place it shows -- and the guest's text
+ * is exactly what it would have been either way.
+ */
+it('tells the log, not the guest, when an answer ran into the token cap', function (): void {
+    Log::spy();
+    config()->set('bar.answers.max_tokens', 1500);
+
+    [$text, , $errors] = collectStream([
+        textDelta('A Negroni is equal parts gin, Campari and'),
+        new StreamEnd('end-1', 'length', new Usage(completionTokens: 1500), 0),
+    ]);
+
+    expect($text)->toBe('A Negroni is equal parts gin, Campari and')
+        ->and($errors)->toBe([]);
+
+    Log::shouldHaveReceived('warning')
+        ->once()
+        ->withArgs(fn (string $message, array $context): bool => $context === [
+            'invocation_id' => 'inv-1',
+            'max_tokens' => 1500,
+            'completion_tokens' => 1500,
+        ]);
+});
+
+it('says nothing when an answer finished on its own', function (): void {
+    Log::spy();
+
+    collectStream([
+        textDelta('Stirred, never shaken.'),
+        new StreamEnd('end-1', 'stop', new Usage(completionTokens: 40), 0),
+    ]);
+
+    Log::shouldNotHaveReceived('warning');
 });

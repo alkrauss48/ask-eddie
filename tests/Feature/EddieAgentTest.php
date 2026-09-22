@@ -7,6 +7,7 @@ use App\Tools\SurveyTheBooks;
 use Laravel\Ai\Attributes\MaxSteps;
 use Laravel\Ai\Concerns\RemembersConversations;
 use Laravel\Ai\Contracts\Conversational;
+use Laravel\Ai\Gateway\TextGenerationOptions;
 
 it('keeps the search, the tally and the telephone behind the bar', function (): void {
     $tools = collect(app(EddieAgent::class)->tools())
@@ -116,4 +117,21 @@ it('reads back only as much of the tab as the bar allows', function (): void {
     $method = new ReflectionMethod(EddieAgent::class, 'maxConversationMessages');
 
     expect($method->invoke(app(EddieAgent::class)))->toBe(6);
+});
+
+/**
+ * The tab caps what comes back into context; this caps what one call may say.
+ * Asserted through TextGenerationOptions::forAgent() because that is where the
+ * package actually reads it -- a method it never called would pass on its own.
+ */
+it('holds each call to the bar\'s output allowance', function (): void {
+    config()->set('bar.answers.max_tokens', 321);
+
+    expect(TextGenerationOptions::forAgent(app(EddieAgent::class))->maxTokens)->toBe(321);
+});
+
+it('gives the provider only as long as the bar allows', function (): void {
+    config()->set('bar.answers.timeout', 17);
+
+    expect(app(EddieAgent::class)->timeout())->toBe(17);
 });

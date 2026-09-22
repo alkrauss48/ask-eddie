@@ -188,14 +188,35 @@ class BrowseTheMenus implements Tool
         $values = $request->array($key);
 
         return array_values(array_filter(
-            array_map(fn (mixed $value): string => trim((string) $value), $values),
+            array_map(
+                fn (mixed $value): string => is_scalar($value) ? trim((string) $value) : '',
+                $values,
+            ),
             fn (string $value): bool => $value !== '',
         ));
     }
 
+    /**
+     * One scalar facet, in whichever shape the model sent it.
+     *
+     * Five of these parameters are scalars sitting beside six that are arrays,
+     * and a model that has just filled in without_base_spirit: ["Whiskey"] will
+     * sometimes send temperature: ["Frozen"] to match. Casting that array to a
+     * string raises "Array to string conversion", which HandleExceptions
+     * promotes to an ErrorException -- so the tool's catch-all fires and a
+     * guest is told the menus are unavailable when nothing is wrong with them.
+     * The silent half is worse: without that promotion the value becomes the
+     * literal "Array", matches no facet, and the answer becomes "nothing the
+     * house pours fits that" -- a false claim wearing a true one's clothes,
+     * which is the failure the three distinct returns exist to prevent.
+     *
+     * Normalising through strings() makes the two shapes the same question.
+     * Request::array() casts a scalar to a one-element array, so this costs
+     * nothing for a model that sent the declared shape.
+     */
     private function string(Request $request, string $key): ?string
     {
-        return trim((string) $request->string($key)) ?: null;
+        return $this->strings($request, $key)[0] ?? null;
     }
 
     /**

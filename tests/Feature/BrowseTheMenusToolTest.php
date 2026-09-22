@@ -105,6 +105,22 @@ it('narrows on the single-valued facets', function (): void {
 });
 
 /**
+ * Five facets are scalars sitting beside six that are arrays, and a model that
+ * has just filled in an array parameter sends the next one the same way. That
+ * used to cast an array to a string: "Array to string conversion", promoted to
+ * an ErrorException by HandleExceptions, caught by the tool's own catch-all and
+ * reported to the guest as an outage the menus were not having. Unpromoted it
+ * was worse and quieter -- the value became the literal "Array", matched no
+ * facet, and the tool said nothing the house pours fits, which is the false
+ * negative the three distinct returns exist to keep apart from a true one.
+ */
+it('reads a single-valued facet whether the model sends a string or an array', function (): void {
+    expect(namesIn(browsed(['technique' => ['Stirred']])))->toBe(namesIn(browsed(['technique' => 'Stirred'])))
+        ->and(namesIn(browsed(['temperature' => ['Hot']])))->toBe(['Hot Buttered Rum'])
+        ->and(namesIn(browsed(['menu' => ['Spring Menu']])))->toBe(namesIn(browsed(['menu' => 'Spring Menu'])));
+});
+
+/**
  * "What's good?" has to be answerable with no arguments at all, the same
  * property DrinkQuery holds.
  */

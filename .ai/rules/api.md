@@ -7,6 +7,7 @@ paths:
   - app/Http/Middleware/VerifyBarKey.php
   - app/Ai/Bar/WebTabKeeper.php
   - app/Ai/Streaming/SseAnswerStream.php
+  - app/Ai/Streaming/AnswerStream.php
 ---
 
 # The Web Door
@@ -139,3 +140,6 @@ This is a cap on **how often**, not a budget: it bounds request frequency, not
 what any single question costs at the provider. `BarAskController::MAX_QUESTION`
 and `SearchController::MAX_QUESTION` (2000 characters) are the separate cap on
 **how large** one question can be.
+
+## Hitting the token cap is logged, never sent as a frame
+When a StreamEnd arrives with reason 'length' (the answer hit bar.answers.max_tokens), AnswerStream logs a warning with the invocation_id, the cap, and completion_tokens, and emits nothing to the guest. This was decided deliberately: the cap is a backstop, the six-event SSE contract has no frame for it, and frequent hits mean the cap should be raised, not that guests need a "cut short" label. Don't add a `truncated` field or a seventh event without changing the Krauss Haus client at the same time. StreamEnd carries only the final step's reason, so an earlier step that hit the cap (a rare case) isn't logged.

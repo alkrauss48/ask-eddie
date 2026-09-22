@@ -9,6 +9,7 @@ paths:
   - app/Agents/SashaAgent.php
   - app/Console/Commands/BarAskCommand.php
   - config/ai.php
+  - 'app/Agents/**'
 ---
 
 # The bar, and the consult
@@ -87,3 +88,6 @@ The consult limit is per *answer*. One `bar:ask` is still one answer, even when 
 
 ## BarAskCommand::asked(), not question()
 `Illuminate\Console\Command::question()` already exists and is public; a private override is a fatal error.
+
+## Answer length and provider timeout are config-backed methods, not attributes
+Both agents define public maxTokens() and timeout() reading config('bar.answers.max_tokens') / ('bar.answers.timeout') (BAR_ANSWER_MAX_TOKENS=1500, BAR_ANSWER_TIMEOUT=60). laravel/ai checks the method before the #[MaxTokens]/#[Timeout] attribute, so a method is how the value stays tunable via env. maxTokens() must be public: TextGenerationOptions::forAgent() calls it from outside the class. Both are per model call (per step), not per answer or per stream. The four caps are separate: rate limit (how often), MAX_QUESTION (how large the question), tabs.messages (how much history comes back), answers.* (how long each call can talk).

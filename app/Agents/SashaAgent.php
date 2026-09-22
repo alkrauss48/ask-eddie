@@ -85,6 +85,30 @@ class SashaAgent implements Agent, HasTools, RemembersConversations
         return (int) config('bar.tabs.messages');
     }
 
+    /**
+     * How much one model call may say.
+     *
+     * Per step, not per answer -- the package asks this once per call, so an
+     * answer that searches before it speaks gets a fresh allowance each time.
+     * Without it the ceiling is the provider's, and that is a bill rather
+     * than a judgement. See 'answers' in config/bar.php.
+     */
+    public function maxTokens(): int
+    {
+        return (int) config('bar.answers.max_tokens');
+    }
+
+    /**
+     * How long one provider call may take, in seconds.
+     *
+     * The package would default to sixty anyway; reading it from config makes
+     * that a decision someone can change without touching this class.
+     */
+    public function timeout(): int
+    {
+        return (int) config('bar.answers.timeout');
+    }
+
     public function instructions(): Stringable|string
     {
         return <<<'INSTRUCTIONS'
