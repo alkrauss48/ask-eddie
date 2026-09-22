@@ -195,8 +195,13 @@ it('puts a named tab somewhere of its own', function (): void {
     Artisan::call('bar:ask', ['question' => ['what', 'goes', 'in', 'a', 'sazerac?']]);
     Artisan::call('bar:ask', ['question' => ['make', 'it', 'lighter'], '--tab' => 'back-room']);
 
+    // Canonically, because created_at is a timestamp(0): two tabs opened in
+    // the same second tie, and the order of a tie is the table's physical
+    // order, which any other test's rolled-back inserts can move. Which tab
+    // was opened first is not what this asserts -- that there are two of them,
+    // under their own keys, is.
     expect(conversations()->pluck('participant_type')->all())
-        ->toBe(['tab:bar:eddie', 'tab:back-room:eddie']);
+        ->toEqualCanonicalizing(['tab:bar:eddie', 'tab:back-room:eddie']);
 });
 
 it('picks the tab back up rather than opening a second one', function (): void {

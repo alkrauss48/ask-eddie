@@ -175,6 +175,58 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | The Door Onto The Web
+    |--------------------------------------------------------------------------
+    |
+    | Everything under /api is behind a shared secret. There are no users in
+    | this application and there is nothing to log in to, so the whole of the
+    | access control is "does the caller hold a key we issued" -- which makes
+    | the shape of this list the whole of the security story, and worth saying
+    | out loud.
+    |
+    | It is a list rather than a single value so a new key can be handed to the
+    | website before the old one is retired. With one key, rotating it means a
+    | window where the site is locked out; with two, you add, switch, and
+    | remove, and nothing is ever down. BAR_API_KEYS is comma-separated:
+    |
+    |     BAR_API_KEYS=the-new-one,the-old-one
+    |
+    | An empty list is not "open to everyone" -- VerifyBarKey refuses every
+    | request when nothing is configured. That is the point: the failure mode
+    | of forgetting to set this is a door nobody can open, never a door
+    | standing wide. The filter below drops blank segments so a stray comma or
+    | a trailing one cannot leave an empty string in the list, which would
+    | otherwise be a key that matches a caller sending no key at all.
+    |
+    | The key belongs on the Krauss Haus *server*, which relays questions. Put
+    | it in anything a browser downloads and it is public, and anyone who reads
+    | it can spend the AI budget.
+    |
+    */
+
+    'api' => [
+
+        'keys' => array_values(array_filter(
+            array_map(trim(...), explode(',', (string) env('BAR_API_KEYS', ''))),
+            fn (string $key): bool => $key !== '',
+        )),
+
+        /*
+        | Questions per minute, per caller. Keyed by the presented API key
+        | rather than counted globally -- see the 'bar-ask' limiter in
+        | AppServiceProvider::boot() -- so one noisy key cannot spend another
+        | caller's allowance, and a caller with no key at all (which never
+        | gets past VerifyBarKey anyway) is bucketed by IP instead. This is
+        | not a budget: it bounds *how often*, not how much any one question
+        | costs. Twelve is one every five seconds, sustained -- enough for a
+        | real conversation, not enough for a script left running.
+        */
+        'rate_limit' => (int) env('BAR_API_RATE_LIMIT', 12),
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Menu Browsing
     |--------------------------------------------------------------------------
     |

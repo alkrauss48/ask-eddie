@@ -4,11 +4,15 @@ namespace App\Providers;
 
 use App\Ai\Bar\ConsultDesk;
 use App\Ai\Tei\TeiRerankerProvider;
+use App\Http\Middleware\VerifyBarKey;
 use App\Services\Retrieval\AiReranker;
 use App\Services\Retrieval\HouseRetriever;
 use App\Services\Retrieval\NullReranker;
 use App\Services\Retrieval\Reranker;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Ai\Ai;
 
@@ -84,5 +88,21 @@ class AppServiceProvider extends ServiceProvider
             $config,
             $app->make(Dispatcher::class),
         ));
+
+        /*
+         * The cap on how often, not on how much. There is no RouteServiceProvider
+         * in this application, so the named limiter is registered here instead.
+         *
+         * Keyed by the presented API key rather than counted globally: a global
+         * counter would let one noisy caller exhaust the whole endpoint's
+         * allowance and lock out everybody else holding a perfectly good key. A
+         * caller VerifyBarKey would refuse anyway (no header, or the wrong one)
+         * still needs a bucket to be thrown in, so it falls back to the request's
+         * IP -- which only matters for the brief window before that request is
+         * turned away, since an unauthorized request never reaches the model.
+         */
+        RateLimiter::for('bar-ask', fn (Request $request): Limit => Limit::perMinute(
+            (int) config('bar.api.rate_limit'),
+        )->by($request->header(VerifyBarKey::HEADER) ?: $request->ip()));
     }
 }
