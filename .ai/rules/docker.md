@@ -17,7 +17,9 @@ Unused published runtimes (8.0–8.4, mysql, mariadb) were deleted; keep `docker
 
 The deployed image serves with FrankenPHP (Caddy) on :80, in classic mode rather than Octane worker mode -- worker mode would mean adding `laravel/octane` to `composer.json`, and classic mode already gets a real HTTP server. Binding :80 unprivileged works because of `setcap cap_net_bind_service=+ep` on `/usr/local/bin/frankenphp` (Docker and Kubernetes both leave NET_BIND_SERVICE in the default bounding set); the process runs as uid 82.
 
-Concurrency is `num_threads` in `docker/app-frankenphp/Caddyfile`, not `PHP_CLI_SERVER_WORKERS` in the ConfigMap. It must be set explicitly: Go sizes its default thread pool from the node's core count, not the container's CPU limit. `num_threads` x `memory_limit` in `docker/app-frankenphp/php.ini` is the pod's worst-case memory and has to fit inside the Deployment's limit.
+Concurrency is `num_threads` in `docker/app-frankenphp/Caddyfile`, not `PHP_CLI_SERVER_WORKERS` in the ConfigMap. It must be set explicitly: Go sizes its default thread pool from the node's core count, not the container's CPU limit.
+
+Do not size the pod as `num_threads` x `memory_limit`. Measured on this application: idle 79 MiB, 4 threads saturated 99 MiB, 12 threads saturated 124 MiB -- about 3 MiB per thread -- while a full framework boot and one handled request peaks at 22 MiB against a 256M `memory_limit`. `memory_limit` is a per-request ceiling, not an allocation, exactly as `pm.max_children` x `memory_limit` is not how php-fpm is sized. The Deployment's existing 768Mi is ample for 4 threads. For reference the `artisan serve` image measured 82 MiB idle and 86 MiB saturated on 4 workers, so FrankenPHP costs roughly 15% more for the Go runtime and ZTS PHP.
 
 `text/event-stream` is deliberately excluded from the Caddyfile's `encode` match list. A compressed body is a buffered body, and POST /api/ask streams for thirty seconds or more. `output_buffering = Off` in php.ini is the other half of that.
 

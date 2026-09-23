@@ -1,8 +1,17 @@
 name: ci
 
+# Push only, deliberately. With `pull_request` as well, a branch that has a PR
+# open runs the whole workflow twice for one `git push` -- once for the branch
+# push and once for the PR synchronize -- and the concurrency group below
+# cannot collapse them, because github.ref is refs/heads/<branch> for the push
+# and refs/pull/<n>/merge for the PR. The PR run was the pure duplicate: it
+# publishes nothing, since the Build job below pushes only on push events.
+#
+# What this gives up is pull requests from forks, which cannot push to this
+# repository and so would never be tested. Add `pull_request:` back if an
+# outside contributor ever opens one.
 on:
   push:
-  pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -136,7 +145,6 @@ jobs:
           # dev-main. Releases are the semver tags below.
           tags: |
             type=ref,prefix=dev-,event=branch
-            type=ref,prefix=pr-,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}
             type=semver,pattern={{major}}.{{minor}}

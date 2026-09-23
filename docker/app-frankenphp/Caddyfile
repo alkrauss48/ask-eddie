@@ -19,8 +19,12 @@
 		#
 		# It also has to be set explicitly rather than left to the default,
 		# which is twice the CPU count Go sees -- and Go sees the node's cores,
-		# not the container's CPU limit. The arithmetic that matters is this
-		# number times memory_limit in php.ini against the pod's memory limit.
+		# not the container's CPU limit.
+		#
+		# Threads are cheap: saturated, 4 of them measure 99 MiB for the whole
+		# container and 12 measure 124 MiB, so roughly 3 MiB each. The pod's
+		# memory limit follows from that, not from this number times php.ini's
+		# memory_limit.
 		num_threads 4
 	}
 }
