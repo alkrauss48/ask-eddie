@@ -1,0 +1,172 @@
+name: ci
+
+# Push only, deliberately. With `pull_request` as well, a branch that has a PR
+# open runs the whole workflow twice for one `git push` -- once for the branch
+# push and once for the PR synchronize -- and the concurrency group below
+# cannot collapse them, because github.ref is refs/heads/<branch> for the push
+# and refs/pull/<n>/merge for the PR. The PR run was the pure duplicate: it
+# publishes nothing, since the Build job below pushes only on push events.
+#
+# What this gives up is pull requests from forks, which cannot push to this
+# repository and so would never be tested. Add `pull_request:` back if an
+# outside contributor ever opens one.
+on:
+  push:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  php_version: "8.5"
+  node_version: "24.x"
+
+jobs:
+  pint:
+    name: Back-end Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup PHP, with composer and extensions
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.php_version }}
+          extensions: bcmath, dom, fileinfo, intl, mbstring, pgsql, zip
+          tools: composer, pecl
+      - name: Get composer cache directory
+        id: composer-cache
+        run: |
+          printf 'dir=%s\n' "$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+      - name: Install Composer dependencies
+        run: composer install --no-progress --prefer-dist --optimize-autoloader
+      - name: Check formatting
+        run: ./vendor/bin/pint --test
+
+  backend-test:
+    name: Back-end Test
+    runs-on: ubuntu-latest
+    env:
+      DB_CONNECTION: pgsql
+      DB_HOST: localhost
+      DB_USERNAME: sail
+      DB_PASSWORD: password
+    services:
+      # pgvector rather than stock postgres: two migrations create vector
+      # columns and an HNSW index, so the extension has to be available or the
+      # suite cannot migrate at all. Keep the PG major in step with
+      # compose.yaml's pgsql service.
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: sail
+          POSTGRES_PASSWORD: password
+          # phpunit.xml sets DB_DATABASE=testing, and PHPUnit's <env> does not
+          # overwrite a variable the environment already holds -- so this is
+          # the database the suite will look for, and DB_DATABASE is
+          # deliberately left unset above.
+          POSTGRES_DB: testing
+        ports:
+          - 5432/tcp
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup PHP, with composer and extensions
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.php_version }}
+          extensions: bcmath, dom, fileinfo, intl, mbstring, pgsql, zip
+          tools: composer, pecl
+      - name: Install Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.node_version }}
+      - name: Get composer cache directory
+        id: composer-cache
+        run: |
+          printf 'dir=%s\n' "$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+      - name: Cache frontend dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+      - name: Prepare the application
+        env:
+          DB_PORT: ${{ job.services.postgres.ports[5432] }}
+        run: |
+          cp .env.example .env
+          echo "DB_PORT=$DB_PORT" >> $GITHUB_ENV
+      - name: Install Composer dependencies
+        run: composer install --no-progress --prefer-dist --optimize-autoloader
+      - name: Install npm dependencies
+        run: npm ci --prefer-offline
+      - name: Generate app key
+        run: php artisan key:generate
+      # ExampleTest renders the welcome view, which calls @vite -- without a
+      # manifest the suite fails on a missing build rather than on anything
+      # about the application.
+      - name: Build frontend
+        run: npm run build
+      - name: Clear Config
+        run: php artisan config:clear
+      - name: Test with pest
+        run: vendor/bin/pest
+
+  build:
+    name: Build
+    needs: ['pint', 'backend-test']
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v5
+      -
+        name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: alkrauss48/ask-eddie
+          # A branch publishes alkrauss48/ask-eddie:dev-<branch>, so main is
+          # dev-main. Releases are the semver tags below.
+          tags: |
+            type=ref,prefix=dev-,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}
+            type=semver,pattern={{major}}.{{minor}}
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      -
+        name: Login to DockerHub
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      -
+        name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/app-frankenphp/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
