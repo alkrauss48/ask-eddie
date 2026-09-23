@@ -1,0 +1,52 @@
+# Replaces the Caddyfile the FrankenPHP image ships. The upstream one is built
+# for a machine that faces the internet; this one faces an nginx ingress inside
+# the cluster, which changes three things: no TLS, no admin API, and an
+# encoder that knows to leave an event stream alone.
+
+{
+	# The ingress terminates TLS, and the pod cannot reach an ACME server even
+	# if it wanted to. Without this, Caddy tries.
+	auto_https off
+
+	# Would otherwise listen on :2019 and want a writable /config. Nothing
+	# reconfigures this server at runtime; it is redeployed instead.
+	admin off
+
+	frankenphp {
+		# What PHP_CLI_SERVER_WORKERS was under `artisan serve`: the number of
+		# answers that can be in flight at once, since one streamed answer
+		# holds its thread for the whole of its thirty-plus seconds.
+		#
+		# It also has to be set explicitly rather than left to the default,
+		# which is twice the CPU count Go sees -- and Go sees the node's cores,
+		# not the container's CPU limit. The arithmetic that matters is this
+		# number times memory_limit in php.ini against the pod's memory limit.
+		num_threads 4
+	}
+}
+
+:80 {
+	root public/
+
+	# text/event-stream is deliberately not in this list. A compressed body is
+	# a buffered body unless every layer flushes the compressor on demand, and
+	# an answer frame that arrives when the window fills rather than when it is
+	# produced defeats the reason POST /api/ask streams at all. The bytes saved
+	# on an event stream are not worth finding out.
+	encode zstd gzip {
+		match {
+			header Content-Type text/html*
+			header Content-Type text/css*
+			header Content-Type text/plain*
+			header Content-Type text/javascript*
+			header Content-Type application/json*
+			header Content-Type application/javascript*
+			header Content-Type image/svg+xml*
+		}
+	}
+
+	# try_files then PHP. The compiled assets under public/build are served off
+	# the filesystem by the file server this directive sets up, so a request
+	# for a stylesheet no longer occupies one of the threads above.
+	php_server
+}

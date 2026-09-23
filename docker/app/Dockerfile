@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 
-# The deployed image for ask.thekrausshaus.com.
+# The previous deployed image for ask.thekrausshaus.com, kept as a fallback.
+#
+# CI builds docker/app-frankenphp/Dockerfile now; nothing builds this one. It
+# is retained so the `php artisan serve` setup can be reached again in a hurry.
 #
 # It serves with `php artisan serve` rather than nginx + php-fpm. One answer
 # streams Server-Sent Events for thirty seconds or more, and the built-in
