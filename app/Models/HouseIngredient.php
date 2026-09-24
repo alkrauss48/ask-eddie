@@ -37,13 +37,20 @@ class HouseIngredient extends Model
     }
 
     /**
-     * The bottle if one is named, otherwise the generic title.
+     * The style this bottle is grouped under, or null when it stands alone.
      *
-     * "Smith and Cross" reads better in a recipe than "Jamaican Rum" does, and
-     * the site prints the group for exactly that reason.
+     * "Jamaican Rum" for Coruba, and for Appleton Estate Signature beside it: the
+     * site groups bottles of one style together, and a build that pours two of
+     * them pours two different rums, not the same one twice. Null when the
+     * catalog has no group, and when the group only repeats the title, because
+     * "Rye Whiskey: Rye Whiskey" tells a guest nothing.
      */
-    public function displayName(): string
+    public function style(): ?string
     {
-        return $this->group ?? $this->title;
+        if ($this->group === null || $this->group === $this->title) {
+            return null;
+        }
+
+        return $this->group;
     }
 }

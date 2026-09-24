@@ -99,7 +99,7 @@ Books retrieval costs 5 queries (ef_search statement, dense, lexical, hydrate, e
 ## The menu tool answers negation; the search only guesses at it
 `BrowseTheMenus` exists because "I don't like whiskey" is a negation and an embedding of "not whiskey" sits among the whiskey drinks. Measured on the real corpus: `--retrieval-only "something bright without whiskey"` returns Port Light, Whiskey Sour, Daiquiri. A model handed that names the Whiskey Sour. Do not merge this into `SearchTheHouse` or "simplify" it to a vector query.
 
-`CocktailSummary::payload()` is 8 keys (name, description, build, served, tags, on, notes, url), asserted by COUNT. It is a value object, following `DrinkSummary` rather than `BookChunk` — `HouseCocktail::toArray()` never reaches a prompt, which matters especially because `house_cocktails.source` holds the whole exported site record. Do not weaken the count to `toContain`, and do not start handing models to the tool.
+`CocktailSummary::payload()` is 9 keys (name, description, build, bottles, served, tags, on, notes, url), asserted by COUNT. It is a value object, following `DrinkSummary` rather than `BookChunk` — `HouseCocktail::toArray()` never reaches a prompt, which matters especially because `house_cocktails.source` holds the whole exported site record. Do not weaken the count to `toContain`, and do not start handing models to the tool.
 
 `url` goes through `HouseUrl::absolute()`. Catalog tables store the site's relative path; a payload is a citation, and a relative href is not a link a guest can open.
 

@@ -36,7 +36,7 @@ class HouseRenderer
      * which changes its content_hash, which makes it pending for `house:embed`.
      * That chain is why bumping this is cheap: nothing has to be purged by hand.
      */
-    public const VERSION = 1;
+    public const VERSION = 2;
 
     public function __construct(private readonly TokenEstimator $tokens) {}
 
@@ -61,6 +61,13 @@ class HouseRenderer
         if ($build !== []) {
             $lines[] = '';
             $lines = [...$lines, ...$build];
+        }
+
+        // The build names bottles; this says which of them are the same style,
+        // so "Jamaican Rum" is still in the text a guest's sentence is matched
+        // against once the line reads "1oz Coruba".
+        foreach ($cocktail->bottlesByStyle() as $style => $bottles) {
+            $lines[] = $style.': '.implode(', ', $bottles).'.';
         }
 
         $lines[] = '';

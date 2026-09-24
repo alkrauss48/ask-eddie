@@ -139,11 +139,11 @@ it('leads with the drinks on the most curated lists', function (): void {
     expect(namesIn(browsed())[0])->toBe('Midnight Rambler');
 });
 
-it('returns exactly the eight payload keys and nothing else', function (): void {
+it('returns exactly the nine payload keys and nothing else', function (): void {
     foreach (browsed() as $row) {
         expect(array_keys($row))->toEqualCanonicalizing([
-            'name', 'description', 'build', 'served', 'tags', 'on', 'notes', 'url',
-        ])->and($row)->toHaveCount(8);
+            'name', 'description', 'build', 'bottles', 'served', 'tags', 'on', 'notes', 'url',
+        ])->and($row)->toHaveCount(9);
     }
 });
 

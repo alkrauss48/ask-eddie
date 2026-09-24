@@ -195,11 +195,12 @@ class MenuBrowser
     }
 
     /**
-     * An ingredient named by slug, by catalog title, or by the bottle on it.
+     * An ingredient named by slug, by the bottle, or by the style it is grouped under.
      *
-     * All three because a guest says "Smith and Cross" (the group), a menu says
-     * "Jamaican Rum" (the title), and a tool call may carry either or the slug
-     * between them.
+     * All three because a guest says "Smith and Cross" (the title), a menu says
+     * "Jamaican Rum" (the group), and a tool call may carry either or the slug
+     * between them. Matching the group is what makes "with Jamaican rum" find
+     * every bottle of that style rather than one.
      *
      * @param  Builder<HouseIngredient>  $ingredients
      */

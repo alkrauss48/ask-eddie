@@ -19,7 +19,7 @@ use App\Services\House\HouseUrl;
  * including the raw exported record in "source", which is the whole site object
  * and would be a small essay of image URLs in every answer.
  *
- * Eight keys, asserted by count rather than by subset, which is the discipline
+ * Nine keys, asserted by count rather than by subset, which is the discipline
  * BookChunkCitationTest, SearchTheBooksToolTest and DrinkSummaryTest all hold.
  * No id, no slug, no content hash, no cost per ounce.
  *
@@ -31,6 +31,7 @@ readonly class CocktailSummary
 {
     /**
      * @param  list<string>  $build  the ingredient lines, in the order they are poured
+     * @param  array<string, list<string>>  $bottles  the bottles in the build, grouped by style
      * @param  list<string>  $tags  the site's own facet labels
      * @param  list<string>  $collections  the menus and flights this drink is on
      */
@@ -38,6 +39,7 @@ readonly class CocktailSummary
         public string $name,
         public ?string $description,
         public array $build,
+        public array $bottles,
         public string $served,
         public array $tags,
         public array $collections,
@@ -61,6 +63,7 @@ readonly class CocktailSummary
                 ->map(fn (HouseCocktailIngredient $line): string => $line->line())
                 ->values()
                 ->all(),
+            bottles: $cocktail->bottlesByStyle(),
             served: self::served($cocktail),
             // Sorted by category then label so that a repeated question gives a
             // repeated answer: a payload that reshuffles between askings reads
@@ -118,6 +121,7 @@ readonly class CocktailSummary
             'name' => $this->name,
             'description' => $this->description,
             'build' => $this->build,
+            'bottles' => $this->bottles,
             'served' => $this->served,
             'tags' => $this->tags,
             'on' => $this->collections,

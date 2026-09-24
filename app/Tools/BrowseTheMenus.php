@@ -23,8 +23,8 @@ use Throwable;
  * instead of retrieving, and every row it returns is a drink that genuinely
  * carries the facets asked for.
  *
- * Each row is exactly CocktailSummary::payload(): eight keys, name,
- * description, build, served, tags, on, notes and url. No id, no slug, no
+ * Each row is exactly CocktailSummary::payload(): nine keys, name,
+ * description, build, bottles, served, tags, on, notes and url. No id, no slug, no
  * content hash, no cost per ounce. The reasoning is the one
  * .ai/rules/retrieval.md gives for the eight-key passage payload and the
  * six-key survey payload: bookkeeping in a payload reads to the model as

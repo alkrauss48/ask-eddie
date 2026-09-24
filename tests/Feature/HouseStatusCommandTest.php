@@ -2,6 +2,7 @@
 
 use App\Models\HouseChunk;
 use App\Services\House\HouseEmbedder;
+use App\Services\House\HouseRenderer;
 use Symfony\Component\Console\Exception\InvalidOptionException;
 
 beforeEach(function (): void {
@@ -18,7 +19,7 @@ it('reports the catalog against the export and the chunks against the embeddings
     importHouse();
 
     $this->artisan('house:status')
-        ->expectsOutputToContain('8 chunk(s) at renderer v1')
+        ->expectsOutputToContain('8 chunk(s) at renderer v'.HouseRenderer::VERSION)
         ->assertSuccessful();
 
     // Asserted off the embedder rather than off the output, because the count
