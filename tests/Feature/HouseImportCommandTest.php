@@ -4,6 +4,7 @@ use App\Models\HouseChunk;
 use App\Models\HouseCocktail;
 use App\Models\HouseCocktailIngredient;
 use App\Models\HouseCollection;
+use App\Services\House\HouseRenderer;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
 
@@ -13,7 +14,7 @@ beforeEach(function (): void {
 
 it('imports the export and reports what it wrote', function (): void {
     $this->artisan('house:import')
-        ->expectsOutputToContain('chunk(s) at renderer v1')
+        ->expectsOutputToContain('chunk(s) at renderer v'.HouseRenderer::VERSION)
         ->assertSuccessful();
 
     expect(HouseCocktail::count())->toBe(3)

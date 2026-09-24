@@ -13,6 +13,6 @@ Before planning or editing, find the row whose globs match the file's path and r
 | app/Services/House/**, app/Models/House*.php, app/Console/Commands/House/**, app/Services/Embedding/**, config/house.php | .ai/rules/house.md |
 | database/migrations/** | .ai/rules/migrations.md |
 | app/Models/BookChunk.php, app/Models/Drink.php | .ai/rules/models.md |
-| app/Services/Retrieval/**, app/Ai/Tei/**, app/Tools/SearchTheBooks.php, app/Agents/EddieAgent.php, app/Services/Books/ChunkEmbedder.php, app/Services/Embedding/**, app/Services/Retrieval/Drink*.php, app/Tools/BrowseTheMenus.php, app/Tools/SearchTheHouse.php, app/Agents/SashaAgent.php, app/Console/Commands/BarAskCommand.php | .ai/rules/retrieval.md |
+| app/Services/Retrieval/**, app/Ai/Tei/**, app/Tools/SearchTheBooks.php, app/Agents/EddieAgent.php, app/Services/Books/ChunkEmbedder.php, app/Services/Embedding/**, app/Services/Retrieval/Drink*.php, app/Tools/BrowseTheMenus.php, app/Tools/SearchTheHouse.php, app/Agents/SashaAgent.php, app/Console/Commands/BarAskCommand.php, app/Services/Retrieval/MenuBrowser.php | .ai/rules/retrieval.md |
 | tests/** | .ai/rules/tests.md |
 | .github/workflows/** | .ai/rules/workflows.md |

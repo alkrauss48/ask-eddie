@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\HouseCocktail;
+use App\Models\HouseIngredient;
 use App\Services\Retrieval\CocktailSummary;
 
 /**
@@ -26,12 +27,12 @@ function summarised(string $slug): CocktailSummary
     return CocktailSummary::fromCocktail($cocktail);
 }
 
-it('hands the model eight keys and no bookkeeping', function (): void {
+it('hands the model nine keys and no bookkeeping', function (): void {
     $payload = summarised('midnight-rambler')->payload();
 
-    expect($payload)->toHaveCount(8)
+    expect($payload)->toHaveCount(9)
         ->and(array_keys($payload))->toEqualCanonicalizing([
-            'name', 'description', 'build', 'served', 'tags', 'on', 'notes', 'url',
+            'name', 'description', 'build', 'bottles', 'served', 'tags', 'on', 'notes', 'url',
         ]);
 });
 
@@ -60,14 +61,48 @@ it('renders the build in the order it is poured, free text and all', function ()
         'Garnish: Lemon twist',
     ]);
 
-    // "London Dry Gin" rather than "Tanqueray": HouseIngredient::displayName()
-    // prints the group, which is the generic class the site groups a build by,
-    // so a guest is told what the drink is made of rather than which bottle the
-    // house happens to have open.
+    // "Tanqueray" rather than "London Dry Gin": the build names the bottle,
+    // and the style it belongs to travels in "bottles".
     expect(summarised('gin-basil-smash')->build)->toBe([
-        '2oz London Dry Gin',
+        '2oz Tanqueray',
         '8 basil leaves',
     ]);
+});
+
+it('groups the bottles in a build under the style each belongs to', function (): void {
+    expect(summarised('gin-basil-smash')->bottles)->toBe(['London Dry Gin' => ['Tanqueray']])
+        // Rye Whiskey's group only repeats its title, and "Rye Whiskey: Rye
+        // Whiskey" tells a guest nothing.
+        ->and(summarised('midnight-rambler')->bottles)->toBe([]);
+});
+
+/**
+ * The defect this exists for: a drink pouring Coruba and Appleton used to read
+ * "1oz Jamaican Rum / 1oz Jamaican Rum", and Sasha described two different
+ * bottles as the same rum twice.
+ */
+it('tells two bottles of one style apart and still says they are one style', function (): void {
+    importHouse();
+
+    $cocktail = HouseCocktail::firstWhere('slug', 'hot-buttered-rum');
+    $coruba = HouseIngredient::create([
+        'slug' => 'coruba',
+        'title' => 'Coruba',
+        'group' => 'Jamaican Rum',
+        'url' => '/ingredients',
+    ]);
+    $cocktail->cocktailIngredients()->create([
+        'house_ingredient_id' => $coruba->id,
+        'position' => $cocktail->cocktailIngredients()->max('position') + 1,
+        'amount' => '.5oz',
+    ]);
+
+    $summary = CocktailSummary::fromCocktail(
+        $cocktail->fresh(['cocktailIngredients.ingredient', 'tags', 'collections']),
+    );
+
+    expect($summary->build)->toBe(['1.5oz Smith and Cross', '6oz boiling water', '.5oz Coruba'])
+        ->and($summary->bottles)->toBe(['Jamaican Rum' => ['Smith and Cross', 'Coruba']]);
 });
 
 /**

@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\HouseIngredient;
 use App\Tools\BrowseTheMenus;
 use Illuminate\JsonSchema\JsonSchemaTypeFactory;
 use Illuminate\Support\Facades\DB;
@@ -92,6 +93,41 @@ it('finds a drink by an ingredient, by its catalog name or by the bottle', funct
         ->and(namesIn(browsed(['with_ingredient' => ['smith-and-cross']])))->toBe(['Hot Buttered Rum']);
 });
 
+/**
+ * Most of the catalog has no group, so an exact match alone left "curaçao"
+ * unable to find "Dry Curaçao": the tool told Sasha the house had nothing filed
+ * under a bottle it pours in eight drinks, and she told the guest.
+ */
+it('finds an ingredient by a whole word of its name when nothing matches exactly', function (): void {
+    $output = browsedText(['with_ingredient' => ['blackberry']]);
+
+    expect(namesIn(browsed(['with_ingredient' => ['blackberry']])))->toBe(['Midnight Rambler'])
+        ->and($output)->toContain('Read "blackberry" as Blackberry Syrup.')
+        ->and($output)->not->toContain('nothing filed under');
+});
+
+it('rules out every bottle of a style named by a word of its group', function (): void {
+    expect(namesIn(browsed(['without_ingredient' => ['rum']])))
+        ->toEqualCanonicalizing(['Gin Basil Smash', 'Midnight Rambler']);
+});
+
+it('folds accents on both sides of a word match', function (): void {
+    importHouse();
+    HouseIngredient::query()->where('slug', 'blackberry-syrup')->update(['title' => 'Dry Curaçao']);
+
+    foreach (['Curaçao', 'curacao'] as $word) {
+        $output = (string) menuTool()->handle(new Request(['with_ingredient' => [$word]]));
+
+        expect($output)->toContain('Midnight Rambler')
+            ->and($output)->toContain('Read "'.$word.'" as Dry Curaçao.');
+    }
+});
+
+it('does not read an exact match or a partial miss as a word match', function (): void {
+    expect(browsedText(['with_ingredient' => ['Jamaican Rum']]))->not->toContain('Read "')
+        ->and(browsedText(['with_ingredient' => ['blue blackberry']]))->toContain('nothing filed under "blue blackberry"');
+});
+
 it('narrows to a single menu or flight', function (): void {
     expect(namesIn(browsed(['menu' => 'Spring Menu'])))
         ->toEqualCanonicalizing(['Gin Basil Smash', 'Midnight Rambler'])
@@ -139,11 +175,11 @@ it('leads with the drinks on the most curated lists', function (): void {
     expect(namesIn(browsed())[0])->toBe('Midnight Rambler');
 });
 
-it('returns exactly the eight payload keys and nothing else', function (): void {
+it('returns exactly the nine payload keys and nothing else', function (): void {
     foreach (browsed() as $row) {
         expect(array_keys($row))->toEqualCanonicalizing([
-            'name', 'description', 'build', 'served', 'tags', 'on', 'notes', 'url',
-        ])->and($row)->toHaveCount(8);
+            'name', 'description', 'build', 'bottles', 'served', 'tags', 'on', 'notes', 'url',
+        ])->and($row)->toHaveCount(9);
     }
 });
 

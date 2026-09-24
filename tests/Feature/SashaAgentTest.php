@@ -165,3 +165,23 @@ it('gives the provider only as long as the bar allows', function (): void {
 
     expect(app(SashaAgent::class)->timeout())->toBe(17);
 });
+
+/**
+ * Sasha has no tool that reaches past the house, so a model that offers to
+ * check the weather and asks for a zip code is inventing a capability and
+ * collecting personal data for nothing. The block has to keep ingredient
+ * questions in scope, or a guest asking what an amaro is gets refused.
+ */
+it('keeps sasha at the bar', function (): void {
+    $instructions = (string) app(SashaAgent::class)->instructions();
+
+    expect($instructions)->toContain('# What the bar is for')
+        ->and($instructions)->toContain('You are here for drinks and nothing else')
+        ->and($instructions)->toContain('what Amaro Lucano tastes like')
+        ->and($instructions)->toContain('You cannot check the weather, the news')
+        ->and($instructions)->toContain('their zip code')
+        ->and($instructions)->toContain('writing code, homework')
+        ->and($instructions)->toContain('You call Eddie about drinks only')
+        ->and($instructions)->toContain('Keep it family friendly')
+        ->and($instructions)->toContain('Pour responsibly');
+});

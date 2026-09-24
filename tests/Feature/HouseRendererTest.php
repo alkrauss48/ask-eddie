@@ -45,6 +45,18 @@ it('renders a cocktail as its name, its build and its facets', function (): void
  * string is embedded, and "shaken", "over crushed ice" and "in a tiki mug" are
  * things a guest says. "ice: Crushed" is not.
  */
+/**
+ * The line names the bottle, so the style has to be said separately or
+ * "London Dry Gin" drops out of the text a guest's sentence is matched against.
+ */
+it('names the bottle in the build and the style it is grouped under', function (): void {
+    $text = renderedChunk(HouseSourceType::Cocktail, 'gin-basil-smash')->text;
+
+    expect($text)->toContain("2oz Tanqueray\n")
+        ->and($text)->toContain('London Dry Gin: Tanqueray.')
+        ->and($text)->not->toContain('2oz London Dry Gin');
+});
+
 it('says how a drink is built in words a guest would use', function (): void {
     expect(renderedChunk(HouseSourceType::Cocktail, 'gin-basil-smash')->text)
         ->toContain('Shaken, served in a Double Rocks Glass, over small cubes.');

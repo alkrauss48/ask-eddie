@@ -23,8 +23,8 @@ use Throwable;
  * instead of retrieving, and every row it returns is a drink that genuinely
  * carries the facets asked for.
  *
- * Each row is exactly CocktailSummary::payload(): eight keys, name,
- * description, build, served, tags, on, notes and url. No id, no slug, no
+ * Each row is exactly CocktailSummary::payload(): nine keys, name,
+ * description, build, bottles, served, tags, on, notes and url. No id, no slug, no
  * content hash, no cost per ounce. The reasoning is the one
  * .ai/rules/retrieval.md gives for the eight-key passage payload and the
  * six-key survey payload: bookkeeping in a payload reads to the model as
@@ -64,13 +64,14 @@ class BrowseTheMenus implements Tool
             }
 
             $unrecognised = $this->browser->unrecognised($query);
+            $interpreted = $this->interpretation($this->browser->interpreted($query));
             $results = $this->browser->browse($query);
 
             if ($results->isEmpty()) {
-                return $this->nothingMatched($unrecognised);
+                return $this->nothingMatched($unrecognised).$interpreted;
             }
 
-            return $this->preamble($query, $results, $unrecognised)."\n\n".$this->payload($results);
+            return $this->preamble($query, $results, $unrecognised).$interpreted."\n\n".$this->payload($results);
         } catch (Throwable $exception) {
             // The reranker's precedent, and SurveyTheBooks's: a catalog outage
             // costs a capability, never an exception mid-answer.
@@ -159,15 +160,36 @@ class BrowseTheMenus implements Tool
     }
 
     /**
+     * Say which bottle a partial ingredient word was read as.
+     *
+     * A guest asking about "curaçao" is answered with the drinks that pour Dry
+     * Curaçao, and Sasha should name that bottle rather than a curaçao the house
+     * does not stock. A broad word -- "orange", "bitters" -- is spelled out as
+     * every entry it caught, so the reading is hers to correct.
+     *
+     * @param  array<string, list<string>>  $interpreted
+     */
+    private function interpretation(array $interpreted): string
+    {
+        $sentences = [];
+
+        foreach ($interpreted as $word => $titles) {
+            $sentences[] = ' Read "'.$word.'" as '.$this->list($titles, quoted: false).'.';
+        }
+
+        return implode('', $sentences);
+    }
+
+    /**
      * @param  list<string>  $values
      */
-    private function list(array $values): string
+    private function list(array $values, bool $quoted = true): string
     {
-        $quoted = array_map(fn (string $value): string => '"'.$value.'"', $values);
+        $items = $quoted ? array_map(fn (string $value): string => '"'.$value.'"', $values) : $values;
 
-        return count($quoted) === 1
-            ? $quoted[0]
-            : implode(', ', array_slice($quoted, 0, -1)).' and '.end($quoted);
+        return count($items) === 1
+            ? $items[0]
+            : implode(', ', array_slice($items, 0, -1)).' and '.end($items);
     }
 
     /**

@@ -81,4 +81,33 @@ class HouseCocktail extends Model
         return $this->belongsToMany(HouseCollection::class, 'house_collection_cocktails')
             ->withPivot(['position', 'section_title', 'is_featured']);
     }
+
+    /**
+     * The bottles this drink pours, grouped under the style each belongs to.
+     *
+     * ["Jamaican Rum" => ["Coruba", "Appleton Estate Signature"]]. The build
+     * names bottles and this says which of them are the same kind of thing, so a
+     * bartender reading both can say "two Jamaican rums, Coruba and Appleton"
+     * rather than either losing the bottles or losing the family. Styles and
+     * bottles keep the order they are poured in. Reads the loaded ingredient
+     * lines, so callers eager load `cocktailIngredients.ingredient`.
+     *
+     * @return array<string, list<string>>
+     */
+    public function bottlesByStyle(): array
+    {
+        $styles = [];
+
+        foreach ($this->cocktailIngredients as $line) {
+            $style = $line->ingredient?->style();
+
+            if ($style === null || in_array($line->ingredient->title, $styles[$style] ?? [], true)) {
+                continue;
+            }
+
+            $styles[$style][] = $line->ingredient->title;
+        }
+
+        return $styles;
+    }
 }

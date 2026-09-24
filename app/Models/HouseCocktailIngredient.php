@@ -53,7 +53,10 @@ class HouseCocktailIngredient extends Model
      *
      * The site's own label wins when it has one, because it is written for the
      * build ("Garnish: Lemon twist") rather than for the catalog ("Lemon
-     * Garnish").
+     * Garnish"). Otherwise it is the bottle's own name -- "1oz Coruba", never
+     * "1oz Jamaican Rum" -- because a build that pours two Jamaican rums pours
+     * two different bottles, and printing the style twice makes them read as one.
+     * The style travels separately; see HouseCocktail::bottlesByStyle().
      */
     public function line(): string
     {
@@ -61,7 +64,7 @@ class HouseCocktailIngredient extends Model
             return $this->free_text;
         }
 
-        $name = $this->label ?? $this->ingredient?->displayName() ?? '';
+        $name = $this->label ?? $this->ingredient?->title ?? '';
 
         return trim(($this->amount === null ? '' : $this->amount.' ').$name);
     }
