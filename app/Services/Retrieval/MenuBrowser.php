@@ -10,6 +10,7 @@ use Illuminate\Contracts\Database\Query\Expression;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * Which drinks the house pours, filtered exactly.
@@ -30,6 +31,13 @@ use Illuminate\Support\Facades\DB;
  */
 class MenuBrowser
 {
+    /**
+     * The ingredient catalog, read once per browser and folded for matching.
+     *
+     * @var list<array{id: int, title: string, exact: list<string>, words: list<string>}>|null
+     */
+    private ?array $catalog = null;
+
     /**
      * The drinks that fit, best first.
      *
@@ -115,6 +123,36 @@ class MenuBrowser
     }
 
     /**
+     * The ingredient words that named no entry outright, and what they were read as.
+     *
+     * A guest says "curaçao" and the catalog says "Dry Curaçao". Matching on
+     * whole words finds it, but Sasha should then name the bottle the house
+     * actually pours rather than a generic curaçao it does not -- and a word as
+     * broad as "orange" should be visible as the six entries it caught rather
+     * than silently standing for all of them.
+     *
+     * @return array<string, list<string>>
+     */
+    public function interpreted(MenuQuery $query): array
+    {
+        $readAs = [];
+
+        foreach ([...$query->withIngredients, ...$query->withoutIngredients] as $ingredient) {
+            if ($this->exactIngredients($ingredient) !== []) {
+                continue;
+            }
+
+            $titles = array_column($this->wordIngredients($ingredient), 'title');
+
+            if ($titles !== []) {
+                $readAs[$ingredient] = $titles;
+            }
+        }
+
+        return $readAs;
+    }
+
+    /**
      * Every facet the house tags along, for a tool description or an error.
      *
      * Read from the table rather than hard-coded, because the site owns this
@@ -164,11 +202,11 @@ class MenuBrowser
         }
 
         foreach ($query->withIngredients as $ingredient) {
-            $builder->whereHas('ingredients', fn (Builder $ingredients) => $this->whereIngredientIs($ingredients, $ingredient));
+            $builder->whereHas('ingredients', fn (Builder $ingredients) => $ingredients->whereKey($this->ingredientIdsFor($ingredient)));
         }
 
         foreach ($query->withoutIngredients as $ingredient) {
-            $builder->whereDoesntHave('ingredients', fn (Builder $ingredients) => $this->whereIngredientIs($ingredients, $ingredient));
+            $builder->whereDoesntHave('ingredients', fn (Builder $ingredients) => $ingredients->whereKey($this->ingredientIdsFor($ingredient)));
         }
 
         if ($query->menu !== null && trim($query->menu) !== '') {
@@ -195,24 +233,104 @@ class MenuBrowser
     }
 
     /**
-     * An ingredient named by slug, by the bottle, or by the style it is grouped under.
+     * The catalog entries an ingredient word names: exactly if it can, by whole words if not.
      *
-     * All three because a guest says "Smith and Cross" (the title), a menu says
+     * Exactly first, by slug, by the bottle, or by the style it is grouped
+     * under, because a guest says "Smith and Cross" (the title), a menu says
      * "Jamaican Rum" (the group), and a tool call may carry either or the slug
      * between them. Matching the group is what makes "with Jamaican rum" find
-     * every bottle of that style rather than one.
+     * every bottle of that style rather than one -- and matching it exactly is
+     * what keeps it from widening to the overproof Jamaican rums too.
      *
-     * @param  Builder<HouseIngredient>  $ingredients
+     * By whole words only when nothing matched exactly. Most of the catalog has
+     * no group, so an exact match alone leaves "curaçao" unable to find "Dry
+     * Curaçao" and "bitters" unable to find any of them, and the tool then tells
+     * Sasha the house has nothing filed under a bottle it pours in eight drinks.
+     * Every word of the needle must be a whole word of the title or group, with
+     * accents folded so "curacao" typed plainly lands too. interpreted() names
+     * what this caught, so a partial word is never silently read as a bottle.
+     *
+     * This happens at question time and is stored nowhere, which is what
+     * separates it from the import-time fuzzy linking .ai/rules/house.md refuses.
+     *
+     * @return list<int>
      */
-    private function whereIngredientIs(Builder $ingredients, string $needle): void
+    private function ingredientIdsFor(string $needle): array
+    {
+        $exact = $this->exactIngredients($needle);
+
+        return array_column($exact !== [] ? $exact : $this->wordIngredients($needle), 'id');
+    }
+
+    /**
+     * @return list<array{id: int, title: string, exact: list<string>, words: list<string>}>
+     */
+    private function exactIngredients(string $needle): array
     {
         $needle = mb_strtolower(trim($needle));
 
-        $ingredients->where(function (Builder $match) use ($needle): void {
-            foreach (['slug', 'title', 'group'] as $column) {
-                $match->orWhere($this->lower($column), $needle);
-            }
-        });
+        return array_values(array_filter(
+            $this->catalog(),
+            fn (array $entry): bool => in_array($needle, $entry['exact'], true),
+        ));
+    }
+
+    /**
+     * @return list<array{id: int, title: string, exact: list<string>, words: list<string>}>
+     */
+    private function wordIngredients(string $needle): array
+    {
+        $words = $this->words($needle);
+
+        if ($words === []) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            $this->catalog(),
+            fn (array $entry): bool => array_diff($words, $entry['words']) === [],
+        ));
+    }
+
+    /**
+     * Every ingredient, folded once.
+     *
+     * A hundred and thirty rows, so reading them into memory is cheaper than
+     * teaching SQL to fold accents -- which Postgres cannot do without the
+     * unaccent extension -- and it is read at most once per question.
+     *
+     * @return list<array{id: int, title: string, exact: list<string>, words: list<string>}>
+     */
+    private function catalog(): array
+    {
+        return $this->catalog ??= HouseIngredient::query()
+            ->orderBy('title')
+            ->orderBy('id')
+            ->get(['id', 'slug', 'title', 'group'])
+            ->map(fn (HouseIngredient $ingredient): array => [
+                'id' => $ingredient->id,
+                'title' => $ingredient->title,
+                'exact' => array_values(array_filter(array_map(
+                    fn (?string $value): ?string => $value === null ? null : mb_strtolower($value),
+                    [$ingredient->slug, $ingredient->title, $ingredient->group],
+                ))),
+                'words' => array_values(array_unique([
+                    ...$this->words($ingredient->title),
+                    ...$this->words((string) $ingredient->group),
+                ])),
+            ])
+            ->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function words(string $value): array
+    {
+        return array_values(array_filter(
+            preg_split('/[^a-z0-9]+/', mb_strtolower(Str::ascii($value))) ?: [],
+            fn (string $word): bool => $word !== '',
+        ));
     }
 
     /**
@@ -248,9 +366,7 @@ class MenuBrowser
 
     private function ingredientExists(string $needle): bool
     {
-        return HouseIngredient::query()
-            ->where(fn (Builder $match) => $this->whereIngredientIs($match, $needle))
-            ->exists();
+        return $this->ingredientIdsFor($needle) !== [];
     }
 
     private function collectionExists(string $needle): bool

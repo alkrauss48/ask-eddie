@@ -11,6 +11,7 @@ paths:
   - app/Tools/SearchTheHouse.php
   - app/Agents/SashaAgent.php
   - app/Console/Commands/BarAskCommand.php
+  - app/Services/Retrieval/MenuBrowser.php
 ---
 
 # Retrieval
@@ -117,3 +118,6 @@ Sasha's hard rule is Eddie's citation rule from the other side. Eddie may invent
 The negating case is named in the instructions rather than left to `BrowseTheMenus`'s tool description, because it is the one a search answers plausibly and wrongly every time.
 
 The menu-only-names rule is prompt-level, not hard — the same standing the project already accepts for Eddie's citations. A `--check-names` dev flag greping an answer for titles absent from `house_cocktails` would turn it into a measurement; that is the next move if she drifts, not a thing to assume exists.
+
+## Ingredient words match exactly first, then by whole words, and the reading is named
+100 of 131 house ingredients have no group, so exact-only matching left "curaçao" unable to find "Dry Curaçao" (8 drinks) and Sasha told a guest the house had none. MenuBrowser::ingredientIdsFor() tries exact slug/title/group first — so "Jamaican Rum" does not widen to the overproof Jamaican rums — and only then requires every needle word to be a whole word of title or group, accent-folded in PHP via Str::ascii (Postgres has no unaccent here). Query-time only, never stored, so it is not the import-time fuzzy linking house.md refuses. BrowseTheMenus always says what a word match was read as ('Read "curaçao" as Dry Curaçao.'); do not drop that sentence.
