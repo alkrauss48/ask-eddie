@@ -135,3 +135,21 @@ it('gives the provider only as long as the bar allows', function (): void {
 
     expect(app(EddieAgent::class)->timeout())->toBe(17);
 });
+
+/**
+ * The same boundary as Sasha's, in period. The emergency sentence is the one
+ * place Eddie is told to step outside his era, and it has to say so, or the
+ * "never break character" paragraph above it wins.
+ */
+it('keeps Eddie at the bar', function (): void {
+    $instructions = (string) app(EddieAgent::class)->instructions();
+
+    expect($instructions)->toContain('# What the bar is for')
+        ->and($instructions)->toContain('You are here for drinks and nothing else')
+        ->and($instructions)->toContain('You cannot check')
+        ->and($instructions)->toContain('never ask a guest where they live')
+        ->and($instructions)->toContain('writing code, homework')
+        ->and($instructions)->toContain('You call Sasha about drinks only')
+        ->and($instructions)->toContain('Keep it family friendly')
+        ->and($instructions)->toContain('time you step outside your era');
+});
