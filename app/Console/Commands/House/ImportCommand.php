@@ -43,7 +43,7 @@ class ImportCommand extends Command
         if ($missing !== []) {
             $this->error('The house export is incomplete on '.$importer->export()->sourceDirectory().'.');
             $this->line('<fg=gray>Missing: '.implode(', ', $missing).'</>');
-            $this->line('<fg=gray>Run `npm run export:data` in the-krauss-haus, or set HOUSE_PATH.</>');
+            $this->line('<fg=gray>Run `house:fetch` to download it from the site, `npm run export:data` in the-krauss-haus, or set HOUSE_PATH.</>');
 
             return self::FAILURE;
         }

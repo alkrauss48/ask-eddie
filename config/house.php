@@ -37,6 +37,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Fetch URL
+    |--------------------------------------------------------------------------
+    |
+    | Where `house:fetch` downloads the export from. The site commits the export
+    | under static/data, which SvelteKit serves from /data, so a deployed pod
+    | with no checkout of that repository can still pull the files onto the
+    | house disk. It is whatever the site has deployed, not a local re-export.
+    |
+    */
+
+    'fetch_url' => rtrim(env(
+        'HOUSE_FETCH_URL',
+        rtrim(env('HOUSE_SITE_URL', 'https://thekrausshaus.com'), '/').'/data',
+    ), '/'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Rendering
     |--------------------------------------------------------------------------
     |
