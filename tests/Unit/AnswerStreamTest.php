@@ -1,5 +1,6 @@
 <?php
 
+use App\Ai\Bar\ConsultWire;
 use App\Ai\Streaming\AnswerStream;
 use Illuminate\Support\Facades\Log;
 use Laravel\Ai\Responses\Data\Meta;
@@ -284,4 +285,99 @@ it('says nothing when an answer finished on its own', function (): void {
     ]);
 
     Log::shouldNotHaveReceived('warning');
+});
+
+/**
+ * A consult speaks into the wire from inside the tool, which runs in the
+ * middle of the walk -- so the stream below says into it between two events,
+ * the way Consultation does between the parent's ToolCall and ToolResult.
+ */
+it('hears a consult on the wire while the walk is under way', function (): void {
+    $heard = [];
+
+    $stream = new StreamableAgentResponse('inv-1', function (): Generator {
+        yield textDelta('Let me ask her.');
+
+        app(ConsultWire::class)->opened('AskSasha', 'Something bright?');
+        app(ConsultWire::class)->reached('AskSasha', 'running an eye down the menus');
+        app(ConsultWire::class)->said('AskSasha', 'Rye and');
+        app(ConsultWire::class)->said('AskSasha', ' blackberry.');
+    }, new Meta('fake', 'fake-model'));
+
+    (new AnswerStream($stream))->each(
+        onText: fn (): null => null,
+        onConsultOpen: function (string $tool, string $question) use (&$heard): void {
+            $heard[] = ['open', $tool, $question];
+        },
+        onConsultText: function (string $tool, string $delta) use (&$heard): void {
+            $heard[] = ['text', $tool, $delta];
+        },
+        onConsultTool: function (string $tool, string $label) use (&$heard): void {
+            $heard[] = ['tool', $tool, $label];
+        },
+    );
+
+    expect($heard)->toBe([
+        ['open', 'AskSasha', 'Something bright?'],
+        ['tool', 'AskSasha', 'running an eye down the menus'],
+        ['text', 'AskSasha', 'Rye and'],
+        ['text', 'AskSasha', ' blackberry.'],
+    ]);
+});
+
+/**
+ * The line goes back to whoever had it, not to nobody -- and a walk that
+ * throws still hands it back.
+ */
+it('gives the wire back when the walk ends, even by throwing', function (): void {
+    $outer = [];
+
+    $untap = app(ConsultWire::class)->tap(
+        fn (): null => null,
+        function (string $tool, string $delta) use (&$outer): void {
+            $outer[] = $delta;
+        },
+        fn (): null => null,
+    );
+
+    $stream = new StreamableAgentResponse('inv-1', function (): Generator {
+        yield textDelta('Hold on.');
+
+        throw new RuntimeException('the line dropped');
+    }, new Meta('fake', 'fake-model'));
+
+    expect(fn () => (new AnswerStream($stream))->each(
+        onText: fn (): null => null,
+        onConsultText: fn (): null => null,
+    ))->toThrow(RuntimeException::class);
+
+    app(ConsultWire::class)->said('AskSasha', 'back to the outer listener');
+
+    $untap();
+
+    app(ConsultWire::class)->said('AskSasha', 'to nobody');
+
+    expect($outer)->toBe(['back to the outer listener']);
+});
+
+/**
+ * Consultation walks the consulted bartender's own stream with no live
+ * callbacks, and that walk must not take the line away from the guest's.
+ */
+it('leaves the wire alone when nobody is listening live', function (): void {
+    $heard = [];
+
+    app(ConsultWire::class)->tap(fn (): null => null, function (string $tool, string $delta) use (&$heard): void {
+        $heard[] = $delta;
+    }, fn (): null => null);
+
+    $stream = new StreamableAgentResponse('inv-1', function (): Generator {
+        app(ConsultWire::class)->said('AskSasha', 'still heard');
+
+        yield textDelta('Inner walk.');
+    }, new Meta('fake', 'fake-model'));
+
+    (new AnswerStream($stream))->each(onText: fn (): null => null);
+
+    expect($heard)->toBe(['still heard']);
 });

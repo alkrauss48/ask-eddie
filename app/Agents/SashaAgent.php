@@ -2,6 +2,7 @@
 
 namespace App\Agents;
 
+use App\Ai\Bar\ConsultDesk;
 use App\Tools\AskEddie;
 use App\Tools\BrowseTheMenus;
 use App\Tools\SearchTheHouse;
@@ -54,7 +55,7 @@ use Stringable;
  * feature until somebody asks a follow-up.
  *
  * A consulted bartender is outside all of this, and by construction rather
- * than by a flag: Bartenders::ask() resolves a fresh agent and hands it no
+ * than by a flag: Bartenders::consult() resolves a fresh agent and hands it no
  * conversation, so shouldRemember() is false and messages() is empty. That is
  * what Consultation::schema() has always promised the model -- "they cannot
  * hear the conversation you are having" -- and BarTabTest pins it.
@@ -64,6 +65,11 @@ use Stringable;
  * three separate runs, each handed a fresh budget of eight. App\Ai\Bar\ConsultDesk
  * is what stops that, and deleting it because this attribute looks sufficient
  * is the mistake this paragraph exists to prevent.
+ *
+ * Nor is leaving AskEddie out of tools() while a consult is open. That only
+ * saves a consulted bartender from reaching for a call the desk would turn
+ * away -- a wasted step, and a "calling Eddie over" printed inside the reply
+ * the guest is watching. The desk still refuses it if it is ever offered.
  */
 #[MaxSteps(8)]
 class SashaAgent implements Agent, HasTools, RemembersConversations
@@ -74,6 +80,7 @@ class SashaAgent implements Agent, HasTools, RemembersConversations
         private readonly SearchTheHouse $search,
         private readonly BrowseTheMenus $menus,
         private readonly AskEddie $eddie,
+        private readonly ConsultDesk $desk,
     ) {}
 
     /**
@@ -227,10 +234,16 @@ class SashaAgent implements Agent, HasTools, RemembersConversations
     }
 
     /**
+     * Everything behind the bar, less the phone while somebody is already on it.
+     *
      * @return list<AskEddie|BrowseTheMenus|SearchTheHouse>
      */
     public function tools(): iterable
     {
+        if ($this->desk->isOpen()) {
+            return [$this->search, $this->menus];
+        }
+
         return [$this->search, $this->menus, $this->eddie];
     }
 }

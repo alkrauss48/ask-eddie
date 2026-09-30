@@ -29,11 +29,13 @@ use Laravel\Ai\Responses\StreamableAgentResponse;
 final class Bartenders
 {
     /**
-     * Ask a bartender a question and wait for the whole answer.
+     * Put another bartender's question to a bartender, streamed.
      *
-     * Blocking rather than streamed: a consult's result reaches the guest
-     * through the parent's stream as one finished utterance, and there is
-     * nothing to interleave it with.
+     * Streamed rather than blocking so the guest can overhear it: Consultation
+     * walks this through its own AnswerStream and says each piece into the
+     * ConsultWire as it arrives, while still handing the parent model the
+     * whole reply at the end. A blocking prompt() here left the guest watching
+     * "calling Sasha over" and nothing else for the length of her answer.
      *
      * And deliberately tabless. This is the consult path, and it takes no
      * conversation id on purpose: the agent resolved here is a fresh instance
@@ -44,15 +46,15 @@ final class Bartenders
      * in Eddie's memory as something Eddie said. Do not add a $conversationId
      * parameter here to match stream(); the asymmetry is the feature.
      */
-    public function ask(string $key, string $question): string
+    public function consult(string $key, string $question): StreamableAgentResponse
     {
         $profile = $this->profile($key);
 
-        return $this->agent($key)->prompt(
+        return $this->agent($key)->stream(
             $question,
             provider: $profile['provider'],
             model: $profile['model'],
-        )->text;
+        );
     }
 
     /**

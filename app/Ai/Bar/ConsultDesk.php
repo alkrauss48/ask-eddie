@@ -59,6 +59,19 @@ final class ConsultDesk
     }
 
     /**
+     * Whether a consult is under way right now.
+     *
+     * Read by the agents to leave the consult tool off a bartender who is
+     * themselves being consulted, so a model cannot reach for a call the desk
+     * would only turn away. That saves a step; it is not the guard. The guard
+     * is consult() above, and it holds whether or not anyone asks this.
+     */
+    public function isOpen(): bool
+    {
+        return $this->open;
+    }
+
+    /**
      * Start a fresh answer.
      *
      * The cap is per answer rather than per process, and the desk is a

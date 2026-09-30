@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Ai\Bar\ConsultDesk;
+use App\Ai\Bar\ConsultWire;
 use App\Ai\Tei\TeiRerankerProvider;
 use App\Http\Middleware\VerifyBarKey;
 use App\Services\Retrieval\AiReranker;
@@ -33,6 +34,13 @@ class AppServiceProvider extends ServiceProvider
          * which is exactly the recursion the class exists to stop.
          */
         $this->app->singleton(ConsultDesk::class);
+
+        /*
+         * One line, or nobody hears the consult. The tool speaks into it and
+         * whoever is rendering the answer listens on it, and they only meet if
+         * the container hands both the same object.
+         */
+        $this->app->singleton(ConsultWire::class);
 
         /*
          * Reranking is a mode, not a dependency.

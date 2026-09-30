@@ -139,8 +139,10 @@ it('keeps eddie and sasha on separate tabs', function (): void {
     Artisan::call('bar:ask', ['question' => ['where', 'is', 'the', 'sazerac', 'from?']]);
     Artisan::call('bar:ask', ['question' => ['something', 'bright'], '--bartender' => 'sasha']);
 
+    // Canonicalized: both rows land in the same second, and created_at is
+    // second-precision, so their order is Postgres's to choose.
     expect(conversations()->pluck('participant_type')->all())
-        ->toBe(['tab:bar:eddie', 'tab:bar:sasha']);
+        ->toEqualCanonicalizing(['tab:bar:eddie', 'tab:bar:sasha']);
 
     $hers = conversations()->firstWhere('participant_type', 'tab:bar:sasha')->id;
 
@@ -154,7 +156,7 @@ it('keeps eddie and sasha on separate tabs', function (): void {
 /**
  * "They cannot hear the conversation you are having", pinned. Consultation's
  * schema promises the model exactly that, and it holds by construction rather
- * than by a flag: Bartenders::ask() hands the consulted bartender no tab, so
+ * than by a flag: Bartenders::consult() hands the consulted bartender no tab, so
  * she reads nothing and nothing of hers is written down.
  *
  * The consult itself runs for real -- ToolResult events come from

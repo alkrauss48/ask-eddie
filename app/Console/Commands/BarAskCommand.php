@@ -32,7 +32,10 @@ use Throwable;
  *
  * A consult renders inline, indented under the name of whoever said it. That is
  * the only tool result a guest ever sees, and AnswerStream decides which ones
- * qualify -- this class only decides what the block looks like.
+ * qualify -- this class only decides what the block looks like. It renders
+ * live: the question one bartender put to the other, then the other's reply
+ * streaming into the quoted block as it is written, so the wait for a consult
+ * is a conversation to watch rather than a pause.
  *
  * Every run is its own process, so "the same conversation" is not something
  * the runtime can hand us -- it is a decision, and it is a bar's. The guest
@@ -132,6 +135,11 @@ class BarAskCommand extends Command
 
         $writer = new IndentedWriter($this->output);
 
+        // The consult being overheard, if one is: the quoted block its reply
+        // streams into, and what has streamed so far.
+        $quoted = null;
+        $streamed = '';
+
         // One tab per bartender, never one between them: laravel/ai replays a
         // stored assistant turn as the current agent's own prior words, so a
         // shared tab would put Eddie's cited drinks in Sasha's memory as hers.
@@ -177,10 +185,48 @@ class BarAskCommand extends Command
 
                     $this->line("  <fg=yellow>{$message}</>");
                 },
-                onConsult: function (string $tool, string $answer) use ($writer): void {
+                // The finished answer always arrives, and it is the one that
+                // counts. After a live consult it is normally what streamed and
+                // is not printed twice; it differs only when the other bar went
+                // dead part way, and then the sentence saying so is added. A
+                // consult that never opened -- a refusal -- prints as a block.
+                onConsult: function (string $tool, string $answer) use ($writer, &$quoted, &$streamed): void {
                     $writer->close();
 
-                    $this->consult($tool, $answer);
+                    if ($quoted === null) {
+                        $this->consult($tool, $answer);
+
+                        return;
+                    }
+
+                    $quoted->close();
+
+                    if (trim($answer) !== trim($streamed)) {
+                        $quoted->write(trim($answer));
+                        $quoted->close();
+                    }
+
+                    $quoted = null;
+
+                    $this->newLine();
+                },
+                onConsultOpen: function (string $tool, string $question) use ($writer, $key, $bartenders, &$quoted, &$streamed): void {
+                    $writer->close();
+
+                    $this->overheard($bartenders->name($key), $tool, $question);
+
+                    $quoted = new IndentedWriter($this->output, '  │ ');
+                    $streamed = '';
+                },
+                onConsultText: function (string $tool, string $delta) use (&$quoted, &$streamed): void {
+                    $streamed .= $delta;
+
+                    $quoted?->write($delta);
+                },
+                onConsultTool: function (string $tool, string $label) use (&$quoted): void {
+                    $quoted?->close();
+
+                    $this->line("  <fg=gray>│ ⋯ {$label}</>");
                 },
             );
         } catch (Throwable $exception) {
@@ -196,6 +242,29 @@ class BarAskCommand extends Command
         $this->newLine();
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Print the question one bartender has put to the other, and open the reply.
+     *
+     * The question is written through its own quoted IndentedWriter rather than
+     * line(), for the reason everything a model wrote goes out OUTPUT_RAW: a
+     * bare < in it would otherwise be read as a style tag.
+     */
+    private function overheard(string $asker, string $tool, string $question): void
+    {
+        $voice = (string) (config("bar.consults.voices.{$tool}") ?? $tool);
+
+        $this->newLine();
+        $this->line("  <fg=gray>— {$asker} asks {$voice} —</>");
+
+        $asked = new IndentedWriter($this->output, '  │ ');
+
+        $asked->write(trim($question));
+        $asked->close();
+
+        $this->newLine();
+        $this->line("  <fg=gray>— {$voice} says —</>");
     }
 
     /**

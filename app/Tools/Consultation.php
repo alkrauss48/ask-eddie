@@ -5,6 +5,8 @@ namespace App\Tools;
 use App\Ai\Bar\Bartenders;
 use App\Ai\Bar\ConsultDesk;
 use App\Ai\Bar\ConsultRefusal;
+use App\Ai\Bar\ConsultWire;
+use App\Ai\Streaming\AnswerStream;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Tools\Request;
@@ -32,12 +34,20 @@ use Throwable;
  * answer. laravel/ai's own AgentTool returns 'Agent failed: '.$e->getMessage()
  * here, which under this design would print a raw exception message to a guest
  * in a bartender's voice.
+ *
+ * And overheard. The other bartender's reply is streamed through their own
+ * AnswerStream -- the same filter a guest's answer goes through, so their
+ * retrieval payloads are dropped exactly as they would be at the front of the
+ * bar -- and each piece is said into the ConsultWire as it arrives. The parent
+ * model still gets the whole reply back as the tool's return; the wire only
+ * lets the guest watch it being written.
  */
 abstract class Consultation implements Tool
 {
     public function __construct(
         protected readonly ConsultDesk $desk,
         protected readonly Bartenders $bartenders,
+        protected readonly ConsultWire $wire,
     ) {}
 
     final public function handle(Request $request): Stringable|string
@@ -49,9 +59,7 @@ abstract class Consultation implements Tool
         }
 
         try {
-            $answer = $this->desk->consult(
-                fn (): string => $this->bartenders->ask($this->bartender(), $question),
-            );
+            $answer = $this->desk->consult(fn (): string => $this->overhear($question));
         } catch (Throwable $exception) {
             report($exception);
 
@@ -63,6 +71,36 @@ abstract class Consultation implements Tool
         }
 
         return trim($answer) === '' ? $this->unavailable() : trim($answer);
+    }
+
+    /**
+     * Put the question across and let the guest listen to the reply.
+     *
+     * Only reached once the desk has let the consult through, so a refusal
+     * never opens the wire -- the guest hears the refusal sentence through the
+     * tool's return, the way they always have.
+     */
+    private function overhear(string $question): string
+    {
+        $tool = class_basename(static::class);
+
+        $this->wire->opened($tool, $question);
+
+        $reply = '';
+
+        (new AnswerStream(
+            $this->bartenders->consult($this->bartender(), $question),
+            (array) config('bar.labels'),
+        ))->each(
+            onText: function (string $delta) use ($tool, &$reply): void {
+                $reply .= $delta;
+
+                $this->wire->said($tool, $delta);
+            },
+            onTool: fn (string $label) => $this->wire->reached($tool, $label),
+        );
+
+        return $reply;
     }
 
     /**

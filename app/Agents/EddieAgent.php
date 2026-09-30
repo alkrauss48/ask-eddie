@@ -2,6 +2,7 @@
 
 namespace App\Agents;
 
+use App\Ai\Bar\ConsultDesk;
 use App\Tools\AskSasha;
 use App\Tools\SearchTheBooks;
 use App\Tools\SurveyTheBooks;
@@ -55,7 +56,7 @@ use Stringable;
  * feature until somebody asks a follow-up.
  *
  * A consulted bartender is outside all of this, and by construction rather
- * than by a flag: Bartenders::ask() resolves a fresh agent and hands it no
+ * than by a flag: Bartenders::consult() resolves a fresh agent and hands it no
  * conversation, so shouldRemember() is false and messages() is empty. That is
  * what Consultation::schema() has always promised the model -- "they cannot
  * hear the conversation you are having" -- and BarTabTest pins it.
@@ -65,6 +66,11 @@ use Stringable;
  * three separate runs, each handed a fresh budget of eight. App\Ai\Bar\ConsultDesk
  * is what stops that, and deleting it because this attribute looks sufficient
  * is the mistake this paragraph exists to prevent.
+ *
+ * Nor is leaving AskSasha out of tools() while a consult is open. That only
+ * saves a consulted bartender from reaching for a call the desk would turn
+ * away -- a wasted step, and a "calling Sasha over" printed inside the reply
+ * the guest is watching. The desk still refuses it if it is ever offered.
  */
 #[MaxSteps(8)]
 class EddieAgent implements Agent, HasTools, RemembersConversations
@@ -75,6 +81,7 @@ class EddieAgent implements Agent, HasTools, RemembersConversations
         private readonly SearchTheBooks $search,
         private readonly SurveyTheBooks $survey,
         private readonly AskSasha $sasha,
+        private readonly ConsultDesk $desk,
     ) {}
 
     /**
@@ -255,10 +262,16 @@ class EddieAgent implements Agent, HasTools, RemembersConversations
     }
 
     /**
+     * Everything behind the bar, less the phone while somebody is already on it.
+     *
      * @return list<AskSasha|SearchTheBooks|SurveyTheBooks>
      */
     public function tools(): iterable
     {
+        if ($this->desk->isOpen()) {
+            return [$this->search, $this->survey];
+        }
+
         return [$this->search, $this->survey, $this->sasha];
     }
 }
