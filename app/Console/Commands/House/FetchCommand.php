@@ -3,6 +3,7 @@
 namespace App\Console\Commands\House;
 
 use App\Services\House\HouseExport;
+use ErrorException;
 use Illuminate\Console\Command;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\File;
@@ -117,9 +118,13 @@ class FetchCommand extends Command
      */
     private function write(string $directory, array $files): void
     {
-        File::ensureDirectoryExists($directory);
+        try {
+            File::ensureDirectoryExists($directory);
+        } catch (ErrorException) {
+            // Reported below, with the variable that fixes it.
+        }
 
-        if (! is_writable($directory)) {
+        if (! is_dir($directory) || ! is_writable($directory)) {
             throw new RuntimeException("{$directory} is not writable. Set HOUSE_PATH to a writable directory.");
         }
 

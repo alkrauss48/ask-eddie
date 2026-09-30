@@ -80,3 +80,20 @@ it('fails when the site does not serve a file', function (): void {
         ->expectsOutputToContain('404')
         ->assertFailed();
 });
+
+it('names HOUSE_PATH when the house disk cannot be created', function (): void {
+    fakeHouseSite();
+
+    $parent = sys_get_temp_dir().'/house-fetch-readonly-'.bin2hex(random_bytes(4));
+    mkdir($parent, 0555);
+    useHouseFixture($parent.'/house');
+
+    try {
+        $this->artisan('house:fetch')
+            ->expectsOutputToContain('Set HOUSE_PATH to a writable directory')
+            ->assertFailed();
+    } finally {
+        chmod($parent, 0755);
+        File::deleteDirectory($parent);
+    }
+});
