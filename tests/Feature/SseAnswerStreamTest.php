@@ -226,6 +226,81 @@ it('frames a consult in the other direction too', function (): void {
 });
 
 /**
+ * The consult overheard: the question goes out the moment it is put, the reply
+ * a word at a time while Sasha is still talking, and the finished `consult`
+ * frame after it -- all before Eddie says a word of his own. Order is the whole
+ * assertion, because a client renders frames in the order they arrive.
+ */
+it('streams a consult live, in the order it happened', function (): void {
+    SashaAgent::fake(['Rye and blackberry, stirred.']);
+    EddieAgent::fake([
+        new ToolCallData('c1', 'AskSasha', ['question' => 'What would a modern bar do with rye?']),
+        "That's Sasha's, over at the house.",
+    ]);
+
+    [$body] = sseRun('eddie', 'what would a modern bartender do?');
+
+    $frames = collect(sseParsed($body))->reject(fn (array $frame): bool => $frame[0] === 'text');
+
+    expect($frames->pluck(0)->all())->toBe([
+        'tool', 'consult_open', 'consult_text', 'consult_text', 'consult_text', 'consult_text', 'consult',
+    ])
+        ->and($frames->firstWhere(0, 'consult_open'))
+        ->toBe(['consult_open', ['bartender' => 'Sasha', 'question' => 'What would a modern bar do with rye?']])
+        ->and(sseFramesOfType($body, 'consult_text')->map(fn (array $frame): string => $frame[1]['delta'])->implode(''))
+        ->toBe('Rye and blackberry, stirred.')
+        ->and(sseAnswerText($body))->toBe("That's Sasha's, over at the house.");
+});
+
+/**
+ * Overhearing Sasha must not mean overhearing her tools. Her reply streams
+ * through her own AnswerStream inside the consult, so her retrieval payload is
+ * dropped exactly as it is when a guest asks her directly -- only the
+ * in-character label gets out.
+ */
+it('never puts a consulted bartender\'s payload on the wire', function (): void {
+    sseHouseCorpus();
+
+    SashaAgent::fake([
+        new ToolCallData('s1', 'SearchTheHouse', ['query' => 'blackberry nocturne']),
+        'We pour something close to that.',
+    ]);
+    EddieAgent::fake([
+        new ToolCallData('c1', 'AskSasha', ['question' => 'What does the house do with blackberry?']),
+        "That's Sasha's, over at the house.",
+    ]);
+
+    [$body] = sseRun('eddie', 'anything with blackberry?');
+
+    expect(sseFramesOfType($body, 'consult_tool')->all())
+        ->toBe([['consult_tool', ['bartender' => 'Sasha', 'label' => 'checking the house pages']]]);
+
+    foreach (['Blackberry Syrup', 'thekrausshaus.com', 'Pages from the house', '"citation"', '"build"', '"kind"'] as $leak) {
+        expect($body)->not->toContain($leak);
+    }
+});
+
+/**
+ * A refusal never opened the line, so there is nothing to overhear -- the
+ * guest gets the finished sentence and nothing streamed ahead of it.
+ */
+it('streams nothing ahead of a refused consult', function (): void {
+    config(['bar.consults.limit' => 0]);
+
+    EddieAgent::fake([
+        new ToolCallData('c1', 'AskSasha', ['question' => 'What would a modern bar do with rye?']),
+        'My own books, then.',
+    ]);
+
+    [$body] = sseRun('eddie', 'what would a modern bartender do?');
+
+    expect(sseFramesOfType($body, 'consult_open'))->toBeEmpty()
+        ->and(sseFramesOfType($body, 'consult_text'))->toBeEmpty()
+        ->and(sseFramesOfType($body, 'consult')->first())
+        ->toBe(['consult', ['bartender' => 'Sasha', 'answer' => 'Sasha has a room of her own to look after and has gone back to it.']]);
+});
+
+/**
  * The assertion this class exists for, and the reason the package's own
  * toResponse() and Vercel-protocol streamer are not used: both write the raw
  * event stream, and the raw event stream carries the eight-key passage payload

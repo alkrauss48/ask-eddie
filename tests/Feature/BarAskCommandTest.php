@@ -358,6 +358,53 @@ it('renders a consult inline, attributed, and exactly once', function (): void {
     SashaAgent::assertPrompted('What would a modern bar do with rye?');
 });
 
+/**
+ * The consult as a conversation to watch: the question Eddie put, the tool
+ * Sasha reached for, and her reply streamed into the quoted block -- and the
+ * finished answer that follows it is not printed a second time.
+ */
+it('shows the question and streams the reply into the quoted block', function (): void {
+    SashaAgent::fake([
+        new ToolCallData('s1', 'BrowseTheMenus', []),
+        'Rye and blackberry, stirred.',
+    ]);
+    EddieAgent::fake([
+        new ToolCallData('c1', 'AskSasha', ['question' => 'What would a modern bar do with rye?']),
+        "That's Sasha's, over at the house.",
+    ]);
+
+    Artisan::call('bar:ask', ['question' => ['rye?']]);
+    $output = Artisan::output();
+
+    expect($output)
+        ->toContain('— Eddie asks Sasha —')
+        ->toContain('│ What would a modern bar do with rye?')
+        ->toContain('│ ⋯ running an eye down the menus')
+        ->toContain('│ Rye and blackberry, stirred.')
+        ->and(substr_count($output, 'Rye and blackberry'))->toBe(1)
+        ->and(strpos($output, '— Eddie asks Sasha —'))->toBeLessThan(strpos($output, '— Sasha says —'))
+        ->and(strpos($output, 'Rye and blackberry'))->toBeLessThan(strpos($output, "That's Sasha's, over at the house."));
+});
+
+/**
+ * The other bar going dead after the question was put: the guest saw the
+ * question, and the sentence saying the line is dead lands in the same block.
+ */
+it('says the line is dead inside the block when a live consult fails', function (): void {
+    SashaAgent::fake(fn (): never => throw new RuntimeException('Connection refused by 10.0.0.4'));
+    EddieAgent::fake([
+        new ToolCallData('c1', 'AskSasha', ['question' => 'anything?']),
+        'My own books, then.',
+    ]);
+
+    Artisan::call('bar:ask', ['question' => ['ask', 'sasha']]);
+
+    expect(Artisan::output())
+        ->toContain('— Eddie asks Sasha —')
+        ->toContain('│ The line to the house bar is dead tonight')
+        ->not->toContain('Connection refused');
+});
+
 it('lets sasha call eddie over the same way', function (): void {
     EddieAgent::fake(["That one's out of the Savoy, 1930, page 42."]);
     SashaAgent::fake([

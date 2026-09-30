@@ -2,6 +2,7 @@
 
 namespace App\Ai\Streaming;
 
+use App\Ai\Bar\ConsultWire;
 use Illuminate\Support\Facades\Log;
 use Laravel\Ai\Responses\Data\FinishReason;
 use Laravel\Ai\Responses\StreamableAgentResponse;
@@ -33,6 +34,15 @@ use Laravel\Ai\Streaming\Events\ToolResult;
  * also why it stays here as a const while the in-character labels live in
  * config('bar.labels') -- the labels are copy, this is the payload boundary,
  * and the two must not become one editable list.
+ *
+ * A consult is also overheard while it runs. The three onConsult* callbacks
+ * listen on the ConsultWire for the length of the walk, and what arrives on
+ * them is the other bartender's reply as it is written -- which has already
+ * been through *their own* AnswerStream inside Consultation, so it is their
+ * text and their in-character labels and never a payload. The finished
+ * onConsult still fires afterwards and stays the authoritative text: it is the
+ * only thing a refusal produces, and it is what a consult that failed half a
+ * sentence in actually said.
  */
 final class AnswerStream
 {
@@ -65,18 +75,62 @@ final class AnswerStream
      * @param  (callable(string $label): void)|null  $onTool
      * @param  (callable(string $message): void)|null  $onError
      * @param  (callable(string $tool, string $answer): void)|null  $onConsult
+     * @param  (callable(string $tool, string $question): void)|null  $onConsultOpen
+     * @param  (callable(string $tool, string $delta): void)|null  $onConsultText
+     * @param  (callable(string $tool, string $label): void)|null  $onConsultTool
      *
      * $onConsult is handed the tool's name rather than its label, because the
      * label answers "what is happening" and an attribution answers "who said
      * this" -- a terminal prints one over a quoted block and an SSE sink may
      * want neither. Deciding that here would make this class the place that
      * knows how a consult is presented, which is the consumer's business.
+     *
+     * The wire is tapped only when a live callback is given, so the walk
+     * Consultation does over the consulted bartender's own stream -- which
+     * passes none -- never takes the line away from the guest's.
      */
     public function each(
         callable $onText,
         ?callable $onTool = null,
         ?callable $onError = null,
         ?callable $onConsult = null,
+        ?callable $onConsultOpen = null,
+        ?callable $onConsultText = null,
+        ?callable $onConsultTool = null,
+    ): void {
+        if ($onConsultOpen === null && $onConsultText === null && $onConsultTool === null) {
+            $this->walk($onText, $onTool, $onError, $onConsult);
+
+            return;
+        }
+
+        $untap = app(ConsultWire::class)->tap(
+            function (string $tool, string $question) use ($onConsultOpen): void {
+                $onConsultOpen === null || $onConsultOpen($tool, $question);
+            },
+            function (string $tool, string $delta) use ($onConsultText): void {
+                $onConsultText === null || $onConsultText($tool, $delta);
+            },
+            function (string $tool, string $label) use ($onConsultTool): void {
+                $onConsultTool === null || $onConsultTool($tool, $label);
+            },
+        );
+
+        try {
+            $this->walk($onText, $onTool, $onError, $onConsult);
+        } finally {
+            $untap();
+        }
+    }
+
+    /**
+     * The walk itself, with whatever the wire is doing already settled.
+     */
+    private function walk(
+        callable $onText,
+        ?callable $onTool,
+        ?callable $onError,
+        ?callable $onConsult,
     ): void {
         $messageId = null;
         $started = false;

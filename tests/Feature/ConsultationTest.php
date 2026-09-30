@@ -4,6 +4,7 @@ use App\Agents\EddieAgent;
 use App\Agents\SashaAgent;
 use App\Ai\Bar\ConsultDesk;
 use App\Ai\Bar\ConsultRefusal;
+use App\Ai\Bar\ConsultWire;
 use App\Tools\AskEddie;
 use App\Tools\AskSasha;
 use Illuminate\JsonSchema\JsonSchemaTypeFactory;
@@ -240,4 +241,64 @@ it('requires a question and asks for nothing else', function (): void {
 
     expect(array_keys($schema))->toBe(['question'])
         ->and($schema['question']->toArray()['description'])->toContain('stands on its own');
+});
+
+/**
+ * Overheard: whoever is rendering the answer hears the question the moment it
+ * is put and the reply a piece at a time, and the pieces add up to exactly
+ * what the parent model is handed back.
+ */
+it('says the question and the reply into the wire as they happen', function (): void {
+    $heard = ['open' => [], 'text' => ''];
+
+    app(ConsultWire::class)->tap(
+        function (string $tool, string $question) use (&$heard): void {
+            $heard['open'][] = [$tool, $question];
+        },
+        function (string $tool, string $delta) use (&$heard): void {
+            $heard['text'] .= $delta;
+        },
+        fn (): null => null,
+    );
+
+    SashaAgent::fake(['Rye and blackberry, stirred, with a long lemon twist.']);
+
+    $answer = askSasha();
+
+    expect($heard['open'])->toBe([['AskSasha', 'What is bright and has no whiskey?']])
+        ->and($heard['text'])->toBe($answer)
+        ->and($answer)->toBe('Rye and blackberry, stirred, with a long lemon twist.');
+});
+
+it('never opens the wire for a consult the desk turned away', function (): void {
+    config(['bar.consults.limit' => 0]);
+
+    $opened = false;
+
+    app(ConsultWire::class)->tap(function () use (&$opened): void {
+        $opened = true;
+    }, fn (): null => null, fn (): null => null);
+
+    askSasha();
+
+    expect($opened)->toBeFalse();
+});
+
+/**
+ * A consulted bartender is not handed the phone, so a model cannot spend a
+ * step on a call the desk would only refuse. Not the guard -- the desk still
+ * is -- which is why the previous tests assert through the desk directly.
+ */
+it('leaves the consult tool off a bartender while a consult is open', function (): void {
+    $names = fn (iterable $tools): array => collect($tools)->map(fn (object $tool): string => class_basename($tool))->all();
+
+    $during = app(ConsultDesk::class)->consult(fn (): string => implode(',', [
+        ...$names(app(EddieAgent::class)->tools()),
+        ...$names(app(SashaAgent::class)->tools()),
+    ]));
+
+    expect(explode(',', $during))->not->toContain('AskSasha')
+        ->not->toContain('AskEddie')
+        ->and($names(app(EddieAgent::class)->tools()))->toContain('AskSasha')
+        ->and($names(app(SashaAgent::class)->tools()))->toContain('AskEddie');
 });

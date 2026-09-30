@@ -31,11 +31,22 @@ use Laravel\Ai\Responses\StreamableAgentResponse;
  *   event: meta      data: {"conversation_id": string}   opens the stream
  *   event: text      data: {"delta": string}             a piece of the answer
  *   event: tool      data: {"label": string}             "running an eye down the menus"
+ *   event: consult_open  data: {"bartender": string, "question": string}
+ *   event: consult_tool  data: {"bartender": string, "label": string}
+ *   event: consult_text  data: {"bartender": string, "delta": string}
  *   event: consult   data: {"bartender": string, "answer": string}
  *   event: error     data: {"message": string}           the provider said so
  *   event: done      data: {}                            closes the stream
  *
- * The four middle frames are this class's; meta and done belong to whoever
+ * The three consult_* frames are the consult overheard as it happens: the
+ * question one bartender put to the other, the other's own tools, and their
+ * reply a piece at a time. `bartender` on all three is whoever is *answering*.
+ * They are additive -- a client that ignores them still gets the finished
+ * `consult` frame, which always arrives last and is the authoritative text: it
+ * is the only frame a refused consult produces, and it replaces whatever
+ * streamed if the other bar went dead half a sentence in.
+ *
+ * The middle frames are this class's; meta and done belong to whoever
  * owns the request, because only it knows the conversation id and only it
  * knows the connection is still open at the end. They are built with the same
  * static frame() so the protocol is written down in exactly one place.
@@ -86,8 +97,8 @@ final class SseAnswerStream
      * arrives as an escaped `\n` inside the JSON rather than as a second,
      * unprefixed line that would silently end the frame.
      *
-     * The event name is ours -- 'meta', 'text', 'tool', 'consult', 'error',
-     * 'done' -- and is never built from anything a guest typed.
+     * The event name is ours -- 'meta', 'text', 'tool', the consult frames,
+     * 'error', 'done' -- and is never built from anything a guest typed.
      *
      * @param  array<string, mixed>  $payload
      */
@@ -134,6 +145,28 @@ final class SseAnswerStream
                     Fiber::suspend(self::frame('consult', [
                         'bartender' => self::voice($tool),
                         'answer' => trim($answer),
+                    ]));
+                },
+                // These fire from inside the consult tool, which runs inside
+                // the parent's stream, which runs inside this fiber -- so a
+                // suspend from there is a frame on the wire the moment the
+                // other bartender says it, with nothing buffered in between.
+                onConsultOpen: function (string $tool, string $question): void {
+                    Fiber::suspend(self::frame('consult_open', [
+                        'bartender' => self::voice($tool),
+                        'question' => trim($question),
+                    ]));
+                },
+                onConsultText: function (string $tool, string $delta): void {
+                    Fiber::suspend(self::frame('consult_text', [
+                        'bartender' => self::voice($tool),
+                        'delta' => $delta,
+                    ]));
+                },
+                onConsultTool: function (string $tool, string $label): void {
+                    Fiber::suspend(self::frame('consult_tool', [
+                        'bartender' => self::voice($tool),
+                        'label' => $label,
                     ]));
                 },
             );
