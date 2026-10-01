@@ -6,6 +6,7 @@ use App\Models\BookChunk;
 use App\Models\BookPage;
 use App\Models\Drink;
 use App\Models\DrinkMention;
+use App\Services\House\HouseExport;
 use App\Services\House\HouseImporter;
 use App\Services\House\HouseImportReport;
 use App\Services\Retrieval\DrinkSurveyor;
@@ -305,4 +306,22 @@ function importHouse(bool $force = false): HouseImportReport
     useHouseFixture();
 
     return app(HouseImporter::class)->import($force);
+}
+
+/**
+ * Serve the fixture export as the site would, from /data.
+ *
+ * @param  array<string, string>  $overrides  file contents keyed by dataset name
+ */
+function fakeHouseSite(array $overrides = []): void
+{
+    $responses = [];
+
+    foreach ([...HouseExport::DATASETS, 'manifest'] as $name) {
+        $responses["thekrausshaus.test/data/{$name}.json"] = Http::response(
+            $overrides[$name] ?? (string) file_get_contents(__DIR__."/Fixtures/House/{$name}.json"),
+        );
+    }
+
+    Http::fake($responses);
 }
