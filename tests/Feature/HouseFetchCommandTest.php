@@ -4,24 +4,6 @@ use App\Services\House\HouseExport;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 
-/**
- * Serve the fixture export as the site would, from /data.
- *
- * @param  array<string, string>  $overrides  file contents keyed by dataset name
- */
-function fakeHouseSite(array $overrides = []): void
-{
-    $responses = [];
-
-    foreach ([...HouseExport::DATASETS, 'manifest'] as $name) {
-        $responses["thekrausshaus.test/data/{$name}.json"] = Http::response(
-            $overrides[$name] ?? (string) file_get_contents(__DIR__."/../Fixtures/House/{$name}.json"),
-        );
-    }
-
-    Http::fake($responses);
-}
-
 beforeEach(function (): void {
     config()->set('house.fetch_url', 'https://thekrausshaus.test/data');
 
