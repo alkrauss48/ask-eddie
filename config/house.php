@@ -157,4 +157,21 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Refresh
+    |--------------------------------------------------------------------------
+    |
+    | How long POST /api/house/refresh waits for the site to serve the export
+    | checksum it was told about before it refreshes anyway. The site calls
+    | as it boots, while a rollout may still be sending the public URL to the
+    | old pod; the default of 20 x 15 seconds covers a rollout of five minutes.
+    |
+    */
+
+    'refresh' => [
+        'wait_attempts' => (int) env('HOUSE_REFRESH_WAIT_ATTEMPTS', 20),
+        'wait_seconds' => (int) env('HOUSE_REFRESH_WAIT_SECONDS', 15),
+    ],
+
 ];
