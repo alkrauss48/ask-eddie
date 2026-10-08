@@ -5,6 +5,7 @@ use App\Agents\SashaAgent;
 use App\Http\Middleware\VerifyBarKey;
 use App\Services\Retrieval\NullReranker;
 use App\Services\Retrieval\Reranker;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
 use Laravel\Ai\Models\Conversation;
@@ -113,18 +114,19 @@ it('never lets a conversation id issued for eddie carry his words into sasha\'s 
 });
 
 /**
- * The fail-closed doctrine VerifyBarKey documents, proved across all three
- * routes behind bar.key at once rather than one at a time. BarApiKeyTest
+ * The fail-closed doctrine VerifyBarKey documents, proved across every
+ * route behind bar.key at once rather than one at a time. BarApiKeyTest
  * already pins /api/bartenders in isolation; what matters here is that the
- * same empty list closes /api/ask and /api/search too, key or no key, in a
- * single sweep -- so nobody can "fix" one route's lock without the other two
- * going red.
+ * same empty list closes /api/ask, /api/search and /api/house/refresh too,
+ * key or no key, in a single sweep -- so nobody can "fix" one route's lock
+ * without the others going red.
  */
 it('refuses every request on every route when no key is configured, key or no key', function (): void {
     config()->set('bar.api.keys', []);
     config()->set('app.debug', true);
 
     EddieAgent::fake(['Never said.']);
+    Bus::fake();
 
     $askPayload = ['question' => 'what goes in a sazerac?', 'bartender' => 'eddie'];
     $searchPayload = ['question' => 'what goes in a sazerac?', 'bartender' => 'eddie'];
@@ -138,6 +140,10 @@ it('refuses every request on every route when no key is configured, key or no ke
     test()->postJson('/api/search', $searchPayload)->assertUnauthorized();
     test()->postJson('/api/search', $searchPayload, [VerifyBarKey::HEADER => 'the-house-key'])->assertUnauthorized();
 
+    test()->postJson('/api/house/refresh')->assertUnauthorized();
+    test()->postJson('/api/house/refresh', [], [VerifyBarKey::HEADER => 'the-house-key'])->assertUnauthorized();
+
     EddieAgent::assertNeverPrompted();
+    Bus::assertNothingDispatched();
     expect(Conversation::count())->toBe(0);
 });

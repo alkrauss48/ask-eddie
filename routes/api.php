@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\BarAskController;
 use App\Http\Controllers\BartendersController;
+use App\Http\Controllers\HouseRefreshController;
 use App\Http\Controllers\SearchController;
 use Illuminate\Support\Facades\Route;
 
@@ -51,4 +52,9 @@ Route::middleware('bar.key')->group(function (): void {
     Route::post('/search', SearchController::class)
         ->middleware('throttle:bar-ask')
         ->name('api.search');
+
+    // Called by the Krauss Haus server as it boots, so a redeploy of the site
+    // is also a refresh of Sasha's corpus. Unthrottled: RefreshHouse is unique,
+    // so however often it is called, at most one refresh holds a thread.
+    Route::post('/house/refresh', HouseRefreshController::class)->name('api.house.refresh');
 });
