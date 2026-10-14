@@ -1,0 +1,39 @@
+[
+    {
+        "slug": "after-dinner",
+        "title": "After Dinner",
+        "description": "Something to linger over once the plates are cleared.",
+        "url": "/collections/after-dinner",
+        "image_url": null,
+        "cocktail_slugs": [
+            "midnight-rambler",
+            "hot-buttered-rum"
+        ],
+        "groups": null
+    },
+    {
+        "slug": "tiki-mugs",
+        "title": "Tiki Mugs",
+        "description": "Every drink the house pours into a tiki mug.",
+        "url": "/collections/tiki-mugs",
+        "image_url": null,
+        "cocktail_slugs": [
+            "gin-basil-smash",
+            "hot-buttered-rum"
+        ],
+        "groups": [
+            {
+                "heading": "Year-round",
+                "cocktail_slugs": [
+                    "gin-basil-smash"
+                ]
+            },
+            {
+                "heading": "Christmas",
+                "cocktail_slugs": [
+                    "hot-buttered-rum"
+                ]
+            }
+        ]
+    }
+]

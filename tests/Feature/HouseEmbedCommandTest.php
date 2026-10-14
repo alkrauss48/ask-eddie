@@ -23,7 +23,7 @@ it('embeds every indexable chunk and leaves the rest alone', function (): void {
 
     $this->artisan('house:embed')->assertSuccessful();
 
-    expect(HouseChunk::where('is_indexable', true)->whereNotNull('embedding')->count())->toBe(7)
+    expect(HouseChunk::where('is_indexable', true)->whereNotNull('embedding')->count())->toBe(9)
         ->and(HouseChunk::where('is_indexable', false)->whereNotNull('embedding')->count())->toBe(0);
 });
 
@@ -68,7 +68,7 @@ it('honours the batch size', function (): void {
 
     $this->artisan('house:embed', ['--batch' => 3])->assertSuccessful();
 
-    expect($sizes)->toBe([3, 3, 2]);
+    expect($sizes)->toBe([3, 3, 3, 1]);
 });
 
 it('generates nothing on a second run', function (): void {
@@ -132,7 +132,7 @@ it('makes the corpus pending when the configured model changes', function (): vo
 
     config()->set('house.embedding.model', 'BAAI/bge-m3-something-else');
 
-    expect(app(HouseEmbedder::class)->pending()->count())->toBe(8);
+    expect(app(HouseEmbedder::class)->pending()->count())->toBe(10);
 });
 
 it('reports nothing to embed before anything is imported', function (): void {

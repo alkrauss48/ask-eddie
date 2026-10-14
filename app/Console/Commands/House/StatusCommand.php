@@ -49,6 +49,8 @@ class StatusCommand extends Command
             ['bartenders', (string) HouseBartender::query()->count(), $this->expected($counts, 'bartenders')],
             ['menus', (string) HouseCollection::query()->where('kind', 'menu')->count(), $this->expected($counts, 'menus')],
             ['flights', (string) HouseCollection::query()->where('kind', 'path')->count(), $this->expected($counts, 'paths')],
+            // The site's collections, one kind among the curated lists house_collections holds.
+            ['collections', (string) HouseCollection::query()->where('kind', 'collection')->count(), $this->expected($counts, 'collections')],
         ]);
 
         $this->table(

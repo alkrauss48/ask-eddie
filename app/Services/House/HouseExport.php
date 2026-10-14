@@ -32,6 +32,7 @@ class HouseExport
         'paths',
         'tags',
         'menus',
+        'collections',
     ];
 
     /** @var array<string, list<array<string, mixed>>> */
@@ -140,6 +141,12 @@ class HouseExport
         return $this->dataset('menus');
     }
 
+    /** @return list<array<string, mixed>> the site's cocktail collections, each flat or grouped */
+    public function collections(): array
+    {
+        return $this->dataset('collections');
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -223,6 +230,7 @@ class HouseExport
                 $categories,
             )),
             'menus' => count($this->menus()),
+            'collections' => count($this->collections()),
         ];
     }
 

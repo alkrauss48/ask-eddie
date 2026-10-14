@@ -20,7 +20,7 @@ it('fetches, imports, verifies and embeds the house export', function (): void {
     fakeEmbeddings();
 
     $this->artisan('house:refresh')
-        ->expectsOutputToContain('Fetched 8 files')
+        ->expectsOutputToContain('Fetched 9 files')
         ->expectsOutputToContain('Verified: every invariant holds.')
         ->expectsOutputToContain('The house catalog is current and embedded.')
         ->assertSuccessful();

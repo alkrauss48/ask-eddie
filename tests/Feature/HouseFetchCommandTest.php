@@ -19,7 +19,7 @@ it('downloads the export onto the house disk', function (): void {
     fakeHouseSite();
 
     $this->artisan('house:fetch')
-        ->expectsOutputToContain('Fetched 8 files')
+        ->expectsOutputToContain('Fetched 9 files')
         ->assertSuccessful();
 
     expect(app(HouseExport::class)->isAvailable())->toBeTrue()

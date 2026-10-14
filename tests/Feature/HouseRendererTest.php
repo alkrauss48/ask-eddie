@@ -81,9 +81,9 @@ it('says nothing at all about a glass or ice the site left as None', function ()
         ->and($text)->not->toContain('None');
 });
 
-it('names the menus and flights a drink is on', function (): void {
+it('names the menus, flights and collections a drink is on', function (): void {
     expect(renderedChunk(HouseSourceType::Cocktail, 'midnight-rambler')->text)
-        ->toContain('On the Spring Menu, The Ramble flight.');
+        ->toContain('On the Spring Menu, The Ramble flight, After Dinner collection.');
 });
 
 it('renders a variation without losing what it changes', function (): void {
@@ -146,6 +146,19 @@ it('renders a menu as its sections and its featured drinks', function (): void {
     expect($text)->toContain('Bright: Gin Basil Smash.')
         ->and($text)->toContain('Dark: Midnight Rambler.')
         ->and($text)->toContain('Featured: Midnight Rambler.');
+});
+
+it('renders a grouped collection as its headings, in page order', function (): void {
+    $text = renderedChunk(HouseSourceType::Collection, 'tiki-mugs')->text;
+
+    expect($text)->toStartWith("Tiki Mugs\n\nEvery drink the house pours into a tiki mug.")
+        ->and($text)->toContain("Year-round: Gin Basil Smash.\nChristmas: Hot Buttered Rum.")
+        ->and($text)->not->toContain('Featured');
+});
+
+it('renders a flat collection as one unheaded line', function (): void {
+    expect(renderedChunk(HouseSourceType::Collection, 'after-dinner')->text)
+        ->toEndWith("\n\nMidnight Rambler, Hot Buttered Rum.");
 });
 
 it('renders a flight in the order it is meant to be drunk', function (): void {

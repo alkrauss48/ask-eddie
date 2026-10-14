@@ -18,7 +18,7 @@ it('imports the export and reports what it wrote', function (): void {
         ->assertSuccessful();
 
     expect(HouseCocktail::count())->toBe(3)
-        ->and(HouseChunk::count())->toBe(8);
+        ->and(HouseChunk::count())->toBe(10);
 });
 
 it('writes nothing on a dry run', function (): void {

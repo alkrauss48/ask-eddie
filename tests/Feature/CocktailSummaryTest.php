@@ -115,13 +115,13 @@ it('says how a drink is made and what it arrives in as one line', function (): v
         ->and(summarised('hot-buttered-rum')->served)->toBe('Built in Glass, in a Mug, Hot ice, serves 4');
 });
 
-it('carries the menus and flights a drink is on', function (): void {
+it('carries the menus, flights and collections a drink is on', function (): void {
     $summary = summarised('midnight-rambler');
 
-    expect($summary->collections)->toEqualCanonicalizing(['Spring Menu', 'The Ramble'])
+    expect($summary->collections)->toEqualCanonicalizing(['Spring Menu', 'The Ramble', 'After Dinner'])
         // A drink can sit in a menu section *and* in that menu's featured list,
         // and both rows are true -- but the guest hears the menu named once.
-        ->and($summary->collections)->toHaveCount(2);
+        ->and($summary->collections)->toHaveCount(3);
 });
 
 it('carries the facet labels a guest was matched on', function (): void {

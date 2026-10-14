@@ -83,3 +83,6 @@ So the dense channel is good for queries that name an ingredient or a category, 
 What to do about it in Phase C:
 - The lexical channel is the counterweight, and it works: the tag vocabulary ("Mezcal", "Smoky") is B-weighted in `keywords`, so RRF pulls the named drinks back up. This is a concrete argument for keeping both channels rather than going dense-only at this corpus size.
 - If a bartender still leads with flights on mood questions, prefer a reranker or a per-kind cap in the tool over changing the renderer. Measure before changing `HouseRenderer::VERSION` — a re-render costs one `house:import` and one `house:embed` (~4 minutes for 207 chunks on emulated TEI, measured at 0.8 chunks/s).
+
+## Site collections are a third HouseCollectionKind; read groups OR cocktail_slugs, never both
+The site's /collections/<slug> pages import as `HouseCollectionKind::Collection` in `house_collections` beside menus and flights. "Collection" is overloaded: the table/model mean any curated list, the kind means the site's set. A grouped collection's `groups[].cocktail_slugs` concatenate to exactly its top-level `cocktail_slugs`, so the importer reads groups (heading → `section_title`) when non-null and the flat list otherwise. Reading both attaches every grouped drink twice. `collections` is the LAST entry in `HouseExport::DATASETS`. The order is the manifest checksum.

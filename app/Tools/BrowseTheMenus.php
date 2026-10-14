@@ -43,7 +43,7 @@ class BrowseTheMenus implements Tool
     {
         return 'Browse the drinks the house actually pours, filtered exactly: by base spirit, '
             .'flavour, style, origin, technique, temperature, strength, prep time, an ingredient, '
-            .'or a menu or flight. Every parameter is optional, so it answers "what\'s good?" with '
+            .'or a menu, flight or collection. Every parameter is optional, so it answers "what\'s good?" with '
             .'no arguments. Use the "without" parameters whenever a guest rules something out -- '
             .'"nothing with whiskey" is answered exactly here and only guessed at by a search. '
             .'Every cocktail you name to a guest must have come back from this tool or the house '
@@ -291,7 +291,7 @@ class BrowseTheMenus implements Tool
                 ->description('Simple Prep or Complex Prep, for how much work a drink is.'),
             'menu' => $schema
                 ->string()
-                ->description('Only drinks on a particular menu or flight, by its name or slug.'),
+                ->description('Only drinks on a particular menu, flight or collection, by its name or slug.'),
             'limit' => $schema
                 ->integer()
                 ->description('How many drinks to return. Eight is plenty for a conversation.'),
