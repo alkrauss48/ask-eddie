@@ -33,7 +33,7 @@ readonly class CocktailSummary
      * @param  list<string>  $build  the ingredient lines, in the order they are poured
      * @param  array<string, list<string>>  $bottles  the bottles in the build, grouped by style
      * @param  list<string>  $tags  the site's own facet labels
-     * @param  list<string>  $collections  the menus and flights this drink is on
+     * @param  list<string>  $collections  the menus, flights and collections this drink is on
      */
     public function __construct(
         public string $name,

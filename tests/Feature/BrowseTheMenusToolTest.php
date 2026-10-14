@@ -135,6 +135,27 @@ it('narrows to a single menu or flight', function (): void {
         ->toEqualCanonicalizing(['Gin Basil Smash', 'Midnight Rambler']);
 });
 
+it('narrows to a collection by its title, its slug, or the way a guest says it', function (): void {
+    expect(namesIn(browsed(['menu' => 'Tiki Mugs'])))
+        ->toBe(['Gin Basil Smash', 'Hot Buttered Rum'])
+        ->and(namesIn(browsed(['menu' => 'after-dinner'])))
+        ->toEqualCanonicalizing(['Midnight Rambler', 'Hot Buttered Rum'])
+        ->and(namesIn(browsed(['menu' => 'the Tiki Mugs collection'])))
+        ->toBe(['Gin Basil Smash', 'Hot Buttered Rum'])
+        ->and(browsedText(['menu' => 'the Tiki Mugs collection']))->not->toContain('nothing filed under');
+});
+
+/**
+ * The stripped reading is a second needle, not a replacement: "Spring Menu"
+ * carries the word in its own title and still has to match whole.
+ */
+it('still matches a list whose own title ends in the kind word', function (): void {
+    expect(namesIn(browsed(['menu' => 'spring menu'])))
+        ->toEqualCanonicalizing(['Gin Basil Smash', 'Midnight Rambler'])
+        ->and(namesIn(browsed(['menu' => 'the spring'])))
+        ->toEqualCanonicalizing(['Gin Basil Smash', 'Midnight Rambler']);
+});
+
 it('narrows on the single-valued facets', function (): void {
     expect(namesIn(browsed(['technique' => 'Stirred'])))->toBe(['Midnight Rambler'])
         ->and(namesIn(browsed(['temperature' => 'Hot'])))->toBe(['Hot Buttered Rum']);
@@ -171,7 +192,8 @@ it('answers with no arguments at all', function (): void {
  */
 it('leads with the drinks on the most curated lists', function (): void {
     // Midnight Rambler is on the spring menu twice (a section and the featured
-    // list) and in the Ramble; Gin Basil Smash is on each once.
+    // list), in the Ramble and in After Dinner; Gin Basil Smash is on the
+    // menu, the flight and Tiki Mugs once each.
     expect(namesIn(browsed())[0])->toBe('Midnight Rambler');
 });
 

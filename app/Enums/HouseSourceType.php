@@ -22,6 +22,7 @@ enum HouseSourceType: string
     case Bartender = 'bartender';
     case Menu = 'menu';
     case Path = 'path';
+    case Collection = 'collection';
 
     public function label(): string
     {
@@ -31,6 +32,7 @@ enum HouseSourceType: string
             self::Bartender => 'Bartender',
             self::Menu => 'Menu',
             self::Path => 'Flight',
+            self::Collection => 'Collection',
         };
     }
 }

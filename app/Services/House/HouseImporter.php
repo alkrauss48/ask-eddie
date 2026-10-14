@@ -396,6 +396,30 @@ class HouseImporter
             ), $cocktails);
         }
 
+        foreach ($this->export->collections() as $position => $record) {
+            $collection = $this->saveCollection($report, HouseCollectionKind::Collection, $record, $position);
+            $seen[] = [HouseCollectionKind::Collection->value, $collection->slug];
+
+            // Groups carry the headings and cocktail_slugs is the same drinks
+            // flattened. Read one or the other, never both, or every grouped
+            // drink is attached twice.
+            $members = [];
+
+            if (($record['groups'] ?? null) === null) {
+                foreach ($record['cocktail_slugs'] ?? [] as $slug) {
+                    $members[] = ['slug' => $slug, 'section_title' => null, 'is_featured' => false];
+                }
+            } else {
+                foreach ($record['groups'] as $group) {
+                    foreach ($group['cocktail_slugs'] ?? [] as $slug) {
+                        $members[] = ['slug' => $slug, 'section_title' => $group['heading'] ?? null, 'is_featured' => false];
+                    }
+                }
+            }
+
+            $this->syncMembers($report, $collection, $members, $cocktails);
+        }
+
         $deleted = HouseCollection::query()
             ->whereNotIn(DB::raw("kind || '|' || slug"), array_map(
                 fn (array $pair): string => $pair[0].'|'.$pair[1],

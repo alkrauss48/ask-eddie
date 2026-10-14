@@ -2,6 +2,7 @@
 
 namespace App\Services\House;
 
+use App\Enums\HouseCollectionKind;
 use App\Enums\HouseSourceType;
 use App\Models\HouseBartender;
 use App\Models\HouseCocktail;
@@ -283,7 +284,7 @@ class HouseRenderer
     }
 
     /**
-     * Which menus and flights this drink is on.
+     * Which menus, flights and collections this drink is on.
      *
      * Stated in the body as well as recorded as a keyword, because "what's on
      * the summer menu" is a question about the drink as much as about the menu,
@@ -292,9 +293,11 @@ class HouseRenderer
     private function membershipSentence(HouseCocktail $cocktail): ?string
     {
         $names = $cocktail->collections
-            ->map(fn (HouseCollection $collection): string => $collection->kind->label() === 'Menu'
-                ? $collection->title
-                : $collection->title.' flight')
+            ->map(fn (HouseCollection $collection): string => match ($collection->kind) {
+                HouseCollectionKind::Menu => $collection->title,
+                HouseCollectionKind::Path => $collection->title.' flight',
+                HouseCollectionKind::Collection => $collection->title.' collection',
+            })
             ->unique()
             ->values()
             ->all();

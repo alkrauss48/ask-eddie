@@ -44,6 +44,28 @@ function rewriteHouseDataset(string $directory, string $name, callable $mutate):
     )."\n");
 }
 
+/**
+ * A collection record with one drink taken out of it, in both of its shapes.
+ *
+ * @param  array<string, mixed>  $collection
+ * @return array<string, mixed>
+ */
+function withoutHouseCocktail(array $collection, string $slug): array
+{
+    $keep = fn (array $slugs): array => array_values(array_diff($slugs, [$slug]));
+
+    $collection['cocktail_slugs'] = $keep($collection['cocktail_slugs']);
+
+    if ($collection['groups'] !== null) {
+        $collection['groups'] = array_values(array_filter(
+            array_map(fn (array $group): array => [...$group, 'cocktail_slugs' => $keep($group['cocktail_slugs'])], $collection['groups']),
+            fn (array $group): bool => $group['cocktail_slugs'] !== [],
+        ));
+    }
+
+    return $collection;
+}
+
 it('imports every record in the export', function (): void {
     importHouse();
 
@@ -51,7 +73,8 @@ it('imports every record in the export', function (): void {
         ->and(HouseIngredient::count())->toBe(5)
         ->and(HouseRecipe::count())->toBe(1)
         ->and(HouseCollection::where('kind', HouseCollectionKind::Menu)->count())->toBe(1)
-        ->and(HouseCollection::where('kind', HouseCollectionKind::Path)->count())->toBe(1);
+        ->and(HouseCollection::where('kind', HouseCollectionKind::Path)->count())->toBe(1)
+        ->and(HouseCollection::where('kind', HouseCollectionKind::Collection)->count())->toBe(2);
 });
 
 /**
@@ -144,7 +167,7 @@ it('lets one drink be both sectioned and featured on the same menu', function ()
         ->and($rambler->firstWhere('pivot.is_featured', false)->pivot->section_title)->toBe('Dark');
 });
 
-it('keeps menus and flights in one table', function (): void {
+it('keeps menus, flights and collections in one table', function (): void {
     importHouse();
 
     $onBoth = HouseCocktail::firstWhere('slug', 'midnight-rambler')
@@ -155,7 +178,78 @@ it('keeps menus and flights in one table', function (): void {
         ->values()
         ->all();
 
-    expect($onBoth)->toBe(['menu:spring', 'path:the-ramble']);
+    expect($onBoth)->toBe(['collection:after-dinner', 'menu:spring', 'path:the-ramble']);
+});
+
+/**
+ * @return list<array{0: string, 1: ?string}>
+ */
+function houseCollectionMembers(string $slug): array
+{
+    return HouseCollection::query()
+        ->where('kind', HouseCollectionKind::Collection)
+        ->where('slug', $slug)
+        ->sole()
+        ->cocktails
+        ->map(fn (HouseCocktail $cocktail): array => [$cocktail->slug, $cocktail->pivot->section_title])
+        ->all();
+}
+
+/**
+ * Groups and cocktail_slugs are the same drinks twice over. Reading both would
+ * attach every grouped drink a second time with no heading.
+ */
+it('files a grouped collection under its headings, in page order, once each', function (): void {
+    importHouse();
+
+    expect(houseCollectionMembers('tiki-mugs'))->toBe([
+        ['gin-basil-smash', 'Year-round'],
+        ['hot-buttered-rum', 'Christmas'],
+    ]);
+});
+
+it('files a flat collection with no heading, in page order', function (): void {
+    importHouse();
+
+    expect(houseCollectionMembers('after-dinner'))->toBe([
+        ['midnight-rambler', null],
+        ['hot-buttered-rum', null],
+    ]);
+});
+
+it('refuses an export whose collection lists a drink that does not exist', function (): void {
+    $directory = mutableHouseExport();
+
+    rewriteHouseDataset($directory, 'collections', function (array $collections): array {
+        $collections[1]['groups'][0]['cocktail_slugs'][] = 'a-drink-we-never-made';
+
+        return $collections;
+    });
+
+    expect(fn () => app(HouseImporter::class)->import())
+        ->toThrow(RuntimeException::class, 'The collection [tiki-mugs] lists cocktail [a-drink-we-never-made]');
+
+    File::deleteDirectory($directory);
+});
+
+it('removes a collection that came off the site, and its chunk with it', function (): void {
+    $directory = mutableHouseExport();
+    app(HouseImporter::class)->import();
+
+    rewriteHouseDataset($directory, 'collections', fn (array $collections): array => array_values(
+        array_filter($collections, fn (array $collection): bool => $collection['slug'] !== 'tiki-mugs')
+    ));
+
+    app(HouseImporter::class)->import();
+
+    expect(HouseCollection::where('slug', 'tiki-mugs')->exists())->toBeFalse()
+        ->and(HouseChunk::where('source_type', HouseSourceType::Collection)->pluck('source_slug')->all())->toBe(['after-dinner'])
+        ->and(HouseChunk::query()
+            ->where('source_type', HouseSourceType::Cocktail)
+            ->where('source_slug', 'gin-basil-smash')
+            ->value('text'))->not->toContain('Tiki Mugs');
+
+    File::deleteDirectory($directory);
 });
 
 it('renders one chunk per record and none for an ingredient', function (): void {
@@ -172,11 +266,12 @@ it('renders one chunk per record and none for an ingredient', function (): void 
     expect($counts)->toBe([
         'bartender' => 2,
         'cocktail' => 3,
+        'collection' => 2,
         'menu' => 1,
         'path' => 1,
         'recipe' => 1,
     ])
-        ->and(HouseChunk::count())->toBe(8)
+        ->and(HouseChunk::count())->toBe(10)
         ->and(HouseChunk::where('source_type', 'ingredient')->exists())->toBeFalse();
 });
 
@@ -266,6 +361,12 @@ it('removes a drink that came off the site, and its chunk with it', function ():
 
     rewriteHouseDataset($directory, 'cocktails', fn (array $cocktails): array => array_values(
         array_filter($cocktails, fn (array $cocktail): bool => $cocktail['slug'] !== 'hot-buttered-rum')
+    ));
+
+    // The site never exports a collection naming a drink it no longer has.
+    rewriteHouseDataset($directory, 'collections', fn (array $collections): array => array_map(
+        fn (array $collection): array => withoutHouseCocktail($collection, 'hot-buttered-rum'),
+        $collections,
     ));
 
     app(HouseImporter::class)->import();

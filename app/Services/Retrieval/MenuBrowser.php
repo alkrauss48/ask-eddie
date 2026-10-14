@@ -340,12 +340,21 @@ class MenuBrowser
     {
         $needle = mb_strtolower(trim($needle));
 
-        // Menus and flights share a table on purpose, and a guest saying "off
-        // the summer menu" and one saying "from the Shaman flight" are asking
-        // the same kind of question, so neither kind is excluded here.
-        $collections->where(function (Builder $match) use ($needle): void {
-            $match->where($this->lower('house_collections.slug'), $needle)
-                ->orWhere($this->lower('house_collections.title'), $needle);
+        // A guest says "the Old Fashioneds collection" or "the Shaman flight"
+        // for a list titled without the word. Matched as said and as stripped,
+        // so "Spring Menu", whose title does carry it, still matches whole.
+        $needles = array_values(array_unique([
+            $needle,
+            trim((string) preg_replace(['/^the\s+/', '/\s+(menu|flight|collection)$/'], '', $needle)),
+        ]));
+
+        // Menus, flights and collections share a table on purpose, and a guest
+        // saying "off the summer menu", one saying "from the Shaman flight" and
+        // one saying "out of the tiki mugs" are asking the same kind of
+        // question, so no kind is excluded here.
+        $collections->where(function (Builder $match) use ($needles): void {
+            $match->whereIn($this->lower('house_collections.slug'), $needles)
+                ->orWhereIn($this->lower('house_collections.title'), $needles);
         });
     }
 

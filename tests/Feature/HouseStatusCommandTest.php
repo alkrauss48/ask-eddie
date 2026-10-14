@@ -19,13 +19,13 @@ it('reports the catalog against the export and the chunks against the embeddings
     importHouse();
 
     $this->artisan('house:status')
-        ->expectsOutputToContain('8 chunk(s) at renderer v'.HouseRenderer::VERSION)
+        ->expectsOutputToContain('10 chunk(s) at renderer v'.HouseRenderer::VERSION)
         ->assertSuccessful();
 
     // Asserted off the embedder rather than off the output, because the count
     // the command prints and the count house:embed acts on have to be the same
     // number -- which is the thing worth pinning.
-    expect(app(HouseEmbedder::class)->pending()->count())->toBe(8);
+    expect(app(HouseEmbedder::class)->pending()->count())->toBe(10);
 });
 
 /**

@@ -16,9 +16,9 @@ use Throwable;
  *
  * SearchTheBooks's counterpart, over a corpus three orders of magnitude
  * smaller: the 138 cocktails, 29 syrup and liqueur recipes, 27 bartender bios,
- * 3 menus and 10 flights the house actually publishes. It answers "what is this
- * drink", "how do we make that syrup", "who is that named for" and "what's the
- * shape of that flight" -- anything where the question is about a record's
+ * 3 menus, 10 flights and 2 collections the house actually publishes. It
+ * answers "what is this drink", "how do we make that syrup", "who is that named
+ * for" and "what's the shape of that flight" -- anything where the question is about a record's
  * content rather than about which drinks qualify.
  *
  * Each element is exactly HouseChunk::toArray(): five keys, kind, title, text,
@@ -39,7 +39,7 @@ class SearchTheHouse implements Tool
     public function description(): Stringable|string
     {
         return 'Read the house\'s own pages: a cocktail and how it is built, a syrup or liqueur '
-            .'recipe, a bartender the house names a drink for, a menu, or one of the flights. '
+            .'recipe, a bartender the house names a drink for, a menu, one of the flights, or a collection. '
             .'Returns each page with a link you can give the guest. Use this when the question is '
             .'about a particular drink or recipe; use the menu tool when the question is which '
             .'drink to pour.';
@@ -88,7 +88,7 @@ class SearchTheHouse implements Tool
         return [
             'query' => $schema
                 ->string()
-                ->description('What to look for: a drink name, an ingredient, a syrup, a bartender, a menu, a flight, or a description of the kind of drink wanted.')
+                ->description('What to look for: a drink name, an ingredient, a syrup, a bartender, a menu, a flight, a collection, or a description of the kind of drink wanted.')
                 ->required(),
         ];
     }
